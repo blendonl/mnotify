@@ -1,0 +1,110 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mingw-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Host-side unit tests
+        run: make test
+
+      - name: Build (warnings are errors)
+        run: make CFLAGS_EXTRA=-Werror
+
+      - name: Check the release assembles
+        run: make dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mnotify-win64
+          path: dist/*.zip
+
+  bump:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: bump-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Work out the version and changelog
+        run: python3 tools/bump.py
+
+      - name: Commit them to the branch
+        run: |
+          git diff --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v$(make -s print-version)"
+          git push origin "HEAD:$GITHUB_HEAD_REF"
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Look for an untagged version
+        id: version
+        run: |
+          version=$(make -s print-version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null && status=0 || status=$?
+          case $status in
+            0) echo "v$version is already tagged, nothing to release" ;;
+            2) echo "untagged=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Take the release notes from the changelog
+        if: steps.version.outputs.untagged == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '$1 == "##" { if (found) exit; found = ($2 == v); next } found' CHANGELOG.md \
+            | sed '/./,$!d' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error file=CHANGELOG.md::No \"## $VERSION\" section to take the release notes from"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.version.outputs.untagged == 'true'
+        with:
+          name: mnotify-win64
+          path: dist
+
+      - name: Publish the release
+        if: steps.version.outputs.untagged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" "dist/mnotify-$VERSION-win64.zip" \
+            --target "$GITHUB_SHA" \
+            --title "mnotify $VERSION" \
+            --notes-file notes.md
