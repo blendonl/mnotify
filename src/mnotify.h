@@ -24,6 +24,10 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define MNOTIFY_TRAY_CLASS   L"Shell_TrayWnd"
 #define MNOTIFY_MUTEX        L"Local\\mnotify_singleton"
 
+#define WM_TRAY_QUERY_NOTIFICATION_STATE 0x04EF
+#define PRESENTATION_MODE_EVENT L"{A1965210-3A9D-4bca-822B-433645B3F5A2}"
+#define DDRAW_EXCLUSIVE_MUTEX   L"Local\\__DDrawExclMode__"
+
 #define WM_MNOTIFY_TRAY_MENU (WM_APP + 1)
 #define WM_MNOTIFY_DISMISS   (WM_APP + 2)
 #define WM_MNOTIFY_QUIT      (WM_APP + 3)
