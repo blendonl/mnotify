@@ -16,5 +16,9 @@ Thumbs.db
 
 /test/test_tray_proto
 /test/test_toast_xml
+/test/test_lua_api
+/test/test_anim
+/test/lua-host/
+/test/liblua-host.a
 
 .claude/

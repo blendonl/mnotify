@@ -121,8 +121,8 @@ static void show_balloon(const TrayEffect *effect) {
     log_msg(LOG_INFO, L"balloon from %ls: [%ls] %ls",
             note.app[0] ? note.app : L"?", note.title, note.text);
 
-    popup_show(&note);
     tray_host_notify(&effect->icon, TRAY_NIN_BALLOONSHOW);
+    popup_show(&note);
 }
 
 static const wchar_t *nim_name(uint32_t message) {
