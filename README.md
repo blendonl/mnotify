@@ -1,9 +1,10 @@
 # mnotify
 
 A **tray and notification host for Windows shells that replace Explorer.** It
-takes the place of Explorer's tray window, so apps that report something through
-a tray balloon get an on-screen notification again. It also gives you a menu of
-their tray icons, so an app that hid itself in the tray can still be reached.
+shows the notifications Explorer would have drawn: the toasts Discord, Chrome,
+WhatsApp and Outlook send, and the balloons older tray apps send. It also gives
+you a menu of tray icons, so an app that hid itself in the tray can still be
+reached.
 
 ```
                                    ┌─────────────────────────────────┐
@@ -17,33 +18,40 @@ It is a natural fit for [mshell](https://github.com/blendonl/mshell), a tiling W
 that replaces `explorer.exe`, and works under any other replacement shell. It
 needs no window manager and depends on nothing in one.
 
-## What it can and cannot catch
+## What it shows
 
 Windows has two ways for an app to notify you, and a shell without Explorer
-loses both:
+loses the screen for both:
 
+- **Toast notifications** (WinRT / Windows App SDK). Windows still accepts and
+  stores these without Explorer, in the per-user notification database
+  (`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`), but
+  Explorer's shell is what draws them, so they never appear. **mnotify reads
+  new toasts from that store** as they arrive (read-only, through Windows' own
+  `winsqlite3.dll`) and shows them.
 - **Tray balloons** (`Shell_NotifyIcon` with `NIF_INFO`). Apps send these to
   the window of class `Shell_TrayWnd`, which Explorer owns. With no Explorer
   there is no such window, and the balloon goes nowhere. **mnotify is that
   window**, and shows each balloon it receives.
-- **Toast notifications** (WinRT / Windows App SDK). These are dropped by Windows
-  itself before any program can see them. Without Explorer's shell running,
-  every app's toast notifier reports `DisabledForUser` and nothing is stored,
-  so there is nothing for a third-party program to read or intercept. **mnotify
-  cannot show these, and neither can anything else** short of running Explorer.
+
+Discord checks whether the shell will accept a notification before it sends
+one, by asking `Shell_TrayWnd` (`SHQueryUserNotificationState`). mnotify
+answers the way Explorer does, so Discord notifies again. The answer is "not
+now" while a screensaver, presentation mode or an exclusive-fullscreen game is
+running, and mnotify holds back toasts at those times too.
 
 In practice:
 
-| App | Notifies through | Shown under a shell without Explorer |
+| App | Notifies through | Shown by mnotify |
 |---|---|---|
-| Older Win32 and WinForms tray utilities, backup tools, updaters | Balloons | Yes, by mnotify |
-| Discord, Chrome, Edge, Outlook | Toasts | No |
-| Teams (new) | Toasts, or its own popups with "Teams built-in" notifications | Only with the built-in style |
-| Telegram Desktop, Steam | Their own popups | Yes, without mnotify |
+| Discord, Chrome, Edge, WhatsApp, Outlook, Teams | Toasts | Yes |
+| Older Win32 and WinForms tray utilities, backup tools, updaters | Balloons | Yes |
+| Telegram Desktop, Steam | Their own popups | Not needed |
 
-Discord's message notifications go through toasts only, so they cannot be shown.
-Turning on Discord's *taskbar flashing* makes its window ask for attention
-instead, which a window manager can pick up (mshell: `mshell.appearance.urgency(true)`).
+Toasts need Windows notifications to be on for your account. If
+`HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications\ToastEnabled`
+is `0`, Windows drops every toast before storing it; mnotify warns about this
+when it starts. Set it to `1` (or delete it), then sign out and back in.
 
 ## Usage
 
@@ -67,6 +75,13 @@ Start it once per session. It stays resident, asks running apps to re-register
 their tray icons (the same `TaskbarCreated` broadcast Explorer sends), and from
 then on:
 
+- **A toast** becomes a notification in the chosen corner, naming the app and,
+  for web notifications, the site. Left-click it to do what clicking the toast
+  would have done: open its link, or hand the click to the app's registered
+  toast handler (Chrome opens the page). Apps with no handler, such as Discord,
+  are brought forward instead, through their tray icon if their window is
+  hidden. Right-click dismisses it. Reminders and calls stay up for 25 s. Apps
+  whose banners you turned off in Windows' notification settings stay quiet.
 - **A balloon** becomes a notification in the chosen corner, naming the app that
   sent it. Left-click it to do what clicking the balloon would have done (the
   app gets `NIN_BALLOONUSERCLICK`), right-click to dismiss it. Hovering keeps it

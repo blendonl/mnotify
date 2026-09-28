@@ -112,7 +112,7 @@ static void show_balloon(const TrayEffect *effect) {
     Note note;
     memset(&note, 0, sizeof note);
     note.kind      = kind_of(effect->info_flags);
-    note.from_tray = true;
+    note.source    = NOTE_FROM_TRAY;
     note.icon      = effect->icon;
     mnotify_copy_w(note.title, MNOTIFY_TITLE_CAP, (const wchar_t *)effect->title);
     mnotify_copy_w(note.text,  MNOTIFY_TEXT_CAP,  (const wchar_t *)effect->text);
@@ -178,7 +178,7 @@ static bool exclusive_fullscreen_active(void) {
     return wait == WAIT_TIMEOUT;
 }
 
-static QUERY_USER_NOTIFICATION_STATE user_notification_state(void) {
+QUERY_USER_NOTIFICATION_STATE tray_host_user_state(void) {
     if (screen_saver_running())        return QUNS_NOT_PRESENT;
     if (presentation_mode_on())        return QUNS_PRESENTATION_MODE;
     if (exclusive_fullscreen_active()) return QUNS_RUNNING_D3D_FULL_SCREEN;
@@ -187,7 +187,7 @@ static QUERY_USER_NOTIFICATION_STATE user_notification_state(void) {
 
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_TRAY_QUERY_NOTIFICATION_STATE) {
-        QUERY_USER_NOTIFICATION_STATE state = user_notification_state();
+        QUERY_USER_NOTIFICATION_STATE state = tray_host_user_state();
         log_msg(LOG_TRACE, L"tray: user notification state %d", (int)state);
         return state;
     }

@@ -10,6 +10,7 @@
 #include <wchar.h>
 
 #include "log.h"
+#include "toast_xml.h"
 #include "tray_proto.h"
 
 #ifndef MNOTIFY_VERSION
@@ -31,6 +32,7 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define WM_MNOTIFY_TRAY_MENU (WM_APP + 1)
 #define WM_MNOTIFY_DISMISS   (WM_APP + 2)
 #define WM_MNOTIFY_QUIT      (WM_APP + 3)
+#define WM_MNOTIFY_TOAST_FOCUS (WM_APP + 4)
 
 #define MNOTIFY_COPY_SEND    0x6D6E0001
 
@@ -38,8 +40,11 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define MNOTIFY_TITLE_CAP    TRAY_TITLE_CAP
 #define MNOTIFY_TEXT_CAP     TRAY_INFO_CAP
 #define MNOTIFY_MAX_POPUPS   5
+#define MNOTIFY_AUMID_CAP    256
+#define MNOTIFY_LAUNCH_CAP   TOAST_LAUNCH_CAP
 
 #define MNOTIFY_DEFAULT_TIMEOUT_MS 6000
+#define MNOTIFY_LONG_TIMEOUT_MS    25000
 
 typedef enum {
     NOTE_INFO = 0,
@@ -54,13 +59,29 @@ typedef enum {
     CORNER_TOP_LEFT,
 } Corner;
 
+typedef enum {
+    NOTE_FROM_SEND = 0,
+    NOTE_FROM_TRAY,
+    NOTE_FROM_TOAST,
+} NoteSource;
+
 typedef struct {
-    wchar_t  app[MNOTIFY_APP_CAP];
-    wchar_t  title[MNOTIFY_TITLE_CAP];
-    wchar_t  text[MNOTIFY_TEXT_CAP];
-    NoteKind kind;
-    bool     from_tray;
-    TrayIcon icon;
+    wchar_t         aumid[MNOTIFY_AUMID_CAP];
+    wchar_t         exe[MAX_PATH];
+    wchar_t         launch[MNOTIFY_LAUNCH_CAP];
+    bool            launch_complete;
+    ToastActivation activation;
+} ToastTarget;
+
+typedef struct {
+    wchar_t     app[MNOTIFY_APP_CAP];
+    wchar_t     title[MNOTIFY_TITLE_CAP];
+    wchar_t     text[MNOTIFY_TEXT_CAP];
+    NoteKind    kind;
+    NoteSource  source;
+    int         timeout_ms;
+    TrayIcon    icon;
+    ToastTarget toast;
 } Note;
 
 typedef struct {
@@ -96,6 +117,13 @@ void tray_host_click(const TrayIcon *icon, TrayClick click);
 void tray_host_grant_foreground(uint32_t hwnd);
 void tray_host_prune(void);
 void tray_host_app_name(uint32_t hwnd, wchar_t *out, size_t cap);
+QUERY_USER_NOTIFICATION_STATE tray_host_user_state(void);
+
+void toasts_init(void);
+void toasts_shutdown(void);
+
+void toast_activate(const ToastTarget *target);
+void toast_focus_pending(void);
 
 bool popup_init(void);
 void popup_shutdown(void);

@@ -15,5 +15,6 @@ mnotify.log
 Thumbs.db
 
 /test/test_tray_proto
+/test/test_toast_xml
 
 .claude/

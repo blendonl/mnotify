@@ -238,6 +238,9 @@ static LRESULT CALLBACK control_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         EndMenu();
         PostQuitMessage(0);
         return 0;
+    case WM_MNOTIFY_TOAST_FOCUS:
+        toast_focus_pending();
+        return 0;
     case WM_ENDSESSION:
         if (wp) PostQuitMessage(0);
         return 0;
@@ -313,6 +316,8 @@ static int run(HINSTANCE hinst) {
     mn.timeout_ms = opt.timeout_ms;
     mn.corner     = opt.corner;
 
+    HRESULT com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
     int rc = 1;
     if (!control_init() || !popup_init()) {
         console_print("error: mnotify could not create its windows; see %LOCALAPPDATA%\\mnotify\\mnotify.log");
@@ -322,6 +327,7 @@ static int run(HINSTANCE hinst) {
                         "mnotify only stands in when there is none"
                       : "error: mnotify could not host the tray; see %LOCALAPPDATA%\\mnotify\\mnotify.log");
     } else {
+        toasts_init();
         if (opt.action == ACTION_SEND) {
             SendPayload payload;
             fill_payload(&opt, &payload);
@@ -336,9 +342,11 @@ static int run(HINSTANCE hinst) {
         rc = 0;
     }
 
+    toasts_shutdown();
     tray_host_shutdown();
     popup_shutdown();
     control_shutdown();
+    if (SUCCEEDED(com)) CoUninitialize();
     if (once) CloseHandle(once);
     log_msg(LOG_INFO, L"mnotify: exiting");
     log_shutdown();

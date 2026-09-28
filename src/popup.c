@@ -161,7 +161,7 @@ static int index_of(HWND hwnd) {
 
 static int index_of_identity(const TrayIdentity *id) {
     for (int i = 0; i < s_count; i++)
-        if (s_popups[i].note.from_tray && tray_same_identity(&s_popups[i].note.icon.id, id))
+        if (s_popups[i].note.source == NOTE_FROM_TRAY && tray_same_identity(&s_popups[i].note.icon.id, id))
             return i;
     return -1;
 }
@@ -199,7 +199,8 @@ static void relayout(void) {
 }
 
 static void report_close(const Note *note, CloseReason why) {
-    if (!note->from_tray) return;
+    if (note->source == NOTE_FROM_TOAST && why == CLOSE_CLICKED) toast_activate(&note->toast);
+    if (note->source != NOTE_FROM_TRAY) return;
 
     tray_balloon_closed(&mn.table, &note->icon.id);
 
@@ -324,7 +325,7 @@ static LRESULT CALLBACK popup_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_LBUTTONUP:
         if (i < 0) break;
-        close_at(i, s_popups[i].note.from_tray ? CLOSE_CLICKED : CLOSE_SILENT);
+        close_at(i, s_popups[i].note.source == NOTE_FROM_SEND ? CLOSE_SILENT : CLOSE_CLICKED);
         return 0;
 
     case WM_RBUTTONUP:
@@ -352,9 +353,10 @@ static HWND create_popup_window(void) {
 }
 
 void popup_show(const Note *note) {
-    ULONGLONG expires = GetTickCount64() + (ULONGLONG)mn.timeout_ms;
+    int       timeout = note->timeout_ms > 0 ? note->timeout_ms : mn.timeout_ms;
+    ULONGLONG expires = GetTickCount64() + (ULONGLONG)timeout;
 
-    int existing = note->from_tray ? index_of_identity(&note->icon.id) : -1;
+    int existing = note->source == NOTE_FROM_TRAY ? index_of_identity(&note->icon.id) : -1;
     if (existing >= 0) {
         Popup updated = s_popups[existing];
         updated.note    = *note;
