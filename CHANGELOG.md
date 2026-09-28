@@ -36,6 +36,22 @@ README.
   - Warn at startup when ToastEnabled = 0 has turned toasts off for the
     user, since Windows then drops them before storing them.
 
+- Catch up on missed toasts and list them with --history (28d5cf9)
+
+  Explorer shows the toasts it never displayed when it starts; mnotify now
+  does the same. It remembers the last toast it handled (HKCU\Software\mnotify
+  LastToastId) and on startup shows the ones that arrived since: the newest
+  four and a note saying how many more. The first run catches up on
+  everything Windows is holding.
+
+  - Toasts held back during a screensaver, presentation mode or exclusive
+    fullscreen are summed up in one note when the user is back.
+  - mnotify --history opens a menu of the stored notifications, newest
+    first with their arrival time; choosing one acts like clicking it.
+    Clicking a summary note opens the same menu.
+  - Closing the tray or history menu without choosing gives the keyboard
+    back to the window that had it.
+
 ## 0.1.0
 
 ### Added
