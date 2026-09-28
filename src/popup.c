@@ -371,7 +371,7 @@ static void begin_closing(const Popup *gone) {
 static void report_close(const Note *note, CloseReason why) {
     if (note->source == NOTE_FROM_TOAST && why == CLOSE_CLICKED) toast_activate(&note->toast);
     if (note->source == NOTE_FROM_BACKLOG && why == CLOSE_CLICKED)
-        PostMessageW(mn.control, WM_MNOTIFY_HISTORY, 0, 0);
+        PostMessageW(mn.control, WM_MNOTIFY_HISTORY, MNOTIFY_HISTORY_OPEN, 0);
     if (note->source != NOTE_FROM_TRAY) return;
 
     tray_balloon_closed(&mn.table, &note->icon.id);

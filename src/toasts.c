@@ -10,7 +10,6 @@
 #define TOAST_POLL_MS       500
 #define TOAST_RETRY_MS      10000
 #define TOAST_APP_CACHE     32
-#define HISTORY_LABEL_CHARS 80
 
 #define SQLITE_BUSY           5
 #define SQLITE_ROW            100
@@ -476,51 +475,6 @@ static void poll(void) {
     save_last_id();
 }
 
-static void shorten(wchar_t *s, size_t chars) {
-    if (wcslen(s) <= chars) return;
-    size_t cut = chars - 1;
-    if (IS_HIGH_SURROGATE(s[cut - 1])) cut--;
-    s[cut]     = L'\u2026';
-    s[cut + 1] = L'\0';
-}
-
-static void history_label(const AppInfo *app, const StoredToast *t, wchar_t *out, size_t cap) {
-    wchar_t title[MNOTIFY_TITLE_CAP];
-    wchar_t body[MNOTIFY_TEXT_CAP];
-    mnotify_utf8_to_wide(t->content.title, title, MNOTIFY_TITLE_CAP);
-    mnotify_utf8_to_wide(t->content.body,  body,  MNOTIFY_TEXT_CAP);
-
-    wchar_t *newline = wcschr(body, L'\n');
-    if (newline) *newline = L'\0';
-
-    if (body[0]) _snwprintf(out, cap, L"%ls \u2014 %ls: %ls", app->name, title, body);
-    else         _snwprintf(out, cap, L"%ls \u2014 %ls", app->name, title);
-    out[cap - 1] = L'\0';
-    for (wchar_t *c = out; *c; c++)
-        if (*c < L' ') *c = L' ';
-    shorten(out, HISTORY_LABEL_CHARS);
-}
-
-static void format_when(long long arrival, wchar_t *out, size_t cap) {
-    FILETIME   utc = { (DWORD)arrival, (DWORD)((ULONGLONG)arrival >> 32) };
-    SYSTEMTIME at_utc, at, now;
-    out[0] = L'\0';
-    if (!FileTimeToSystemTime(&utc, &at_utc) ||
-        !SystemTimeToTzSpecificLocalTime(NULL, &at_utc, &at))
-        return;
-
-    GetLocalTime(&now);
-    if (at.wYear == now.wYear && at.wMonth == now.wMonth && at.wDay == now.wDay) {
-        _snwprintf(out, cap, L"%02u:%02u", at.wHour, at.wMinute);
-    } else {
-        wchar_t day[24];
-        if (!GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &at, L"ddd d MMM", day, 24, NULL))
-            day[0] = L'\0';
-        _snwprintf(out, cap, L"%ls %02u:%02u", day, at.wHour, at.wMinute);
-    }
-    out[cap - 1] = L'\0';
-}
-
 int toasts_history(HistoryItem *items, int cap) {
     if (!s_store.db && (s_sql_missing || !store_open())) return -1;
 
@@ -532,8 +486,10 @@ int toasts_history(HistoryItem *items, int cap) {
 
         const AppInfo *app  = app_info(s_row.aumid);
         HistoryItem   *item = &items[count++];
-        history_label(app, &s_row, item->label, MNOTIFY_LABEL_CAP);
-        format_when(s_row.arrival, item->when, MNOTIFY_WHEN_CAP);
+        item->arrival = s_row.arrival;
+        app_line(app, s_row.content.attribution, item->app, MNOTIFY_APP_CAP);
+        mnotify_utf8_to_wide(s_row.content.title, item->title, TOAST_TITLE_CAP);
+        mnotify_utf8_to_wide(s_row.content.body,  item->text,  TOAST_BODY_CAP);
         fill_target(&s_row, app, &item->target);
     }
     s_sql.reset(q);

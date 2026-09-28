@@ -1,10 +1,11 @@
 # Manual test checklist
 
 `make test` covers the logic with no Windows in it: parsing what
-`Shell_NotifyIcon` sends, the icon table, and how callbacks and clicks are
-packed. Everything below needs a Windows session **without Explorer** (mshell,
-or any other replacement shell), because it involves the tray window, the
-screen and other apps.
+`Shell_NotifyIcon` sends, the icon table, how callbacks and clicks are packed,
+reading toast XML, and the history panel's scrolling, search words, line
+breaking and rounded corners. Everything below needs a Windows session
+**without Explorer** (mshell, or any other replacement shell), because it
+involves the tray window, the screen and other apps.
 
 `%LOCALAPPDATA%\mnotify\mnotify.log` is written on every run and is the first
 place to look. Start with `--log-level debug` to see every icon message.
@@ -79,11 +80,35 @@ Send-Toast '<toast><visual><binding template="ToastGeneric"><text>Build finished
 | 6 | Turn off banners for an app in Windows' notification settings, then have it notify. | Nothing appears; the debug log says banners are off for it. |
 | 7 | Run a game in exclusive fullscreen and have Discord notify. | Nothing appears over the game. `SHQueryUserNotificationState` reports 3. |
 | 8 | With `mnotify --quit`, send three toasts, then start mnotify again. | All three appear, oldest farthest from the corner. Restarting again shows nothing new. |
-| 9 | Quit mnotify, send seven toasts, start it. | The newest four appear, with a note *3 more notifications* farthest from the corner. Clicking the note opens the history menu. |
-| 10 | `mnotify --history`. | A menu at the pointer lists stored notifications newest first, *App — Title: body* with the arrival time on the right. `Esc` closes it and the window you were in has the keyboard again. |
-| 11 | Pick a Chrome entry in that menu. | Chrome opens that page. |
+| 9 | Quit mnotify, send seven toasts, start it. | The newest four appear, with a note *3 more notifications* farthest from the corner. Clicking the note opens the history panel. |
+| 10 | `mnotify --history`. | The history panel opens in the notification corner with the stored notifications newest first; see *Notification history* below. `Esc` closes it and the window you were in has the keyboard again. |
+| 11 | Pick a Chrome entry in the panel. | Chrome opens that page. |
 | 12 | Hold presentation mode on (`presentationsettings /start`), send a toast, then turn it off. | Nothing appears while it is on. When it goes off, *1 notification while you were busy*. |
 | 13 | Set `ToastEnabled` to `0` under `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications` and restart mnotify. | A yellow notification says Windows notifications are off. Delete the value afterwards. |
+
+## Notification history
+
+Send a few toasts from different apps first (Discord, Chrome, the `Send-Toast`
+above), or use the ones Windows is already holding.
+
+| # | Test | Expected |
+|---|------|----------|
+| 1 | `mnotify --history`. | A dark panel in the notification corner of the monitor under the pointer, with the keyboard in its search box. *Notifications* and a count at the top, then cards under *Today*, *Yesterday* and weekday headings, newest first. The first card is highlighted. |
+| 2 | Look at the cards. | Each has the app's icon, its name (*Google Chrome · site* for web notifications), the time on the right (*Just now*, *12 min ago*, or the clock time), the title in bold and up to two lines of text ending in *…* when there is more. An app without a Start menu entry (a `Windows.SystemToast.*` sender) shows a coloured initial instead of an icon. |
+| 3 | Type `discord`. | Only Discord's notifications remain, the count reads *N of M*, the search box is outlined in blue and an *×* appears in it. |
+| 4 | Type `DISCÖRD alice` instead. | The same matches as `discord alice`: case and accents are ignored, and every word must match. |
+| 5 | Type `zzzz`. | *No matches* with the query quoted, and the footer offers *Esc Clear*. |
+| 6 | Press `Ctrl+Backspace`. | The last word of the search is deleted, with no box character left behind. |
+| 7 | Press `Esc`, then `Esc` again. | The first clears the search and brings every notification back; the second closes the panel and gives the keyboard back to the window that had it. |
+| 8 | Open it, then use `↓`, `↑`, `PgDn`, `PgUp`, `Ctrl+End`, `Ctrl+Home`. | The highlight moves, and the list scrolls to keep it, and its day heading, in view. |
+| 9 | Move the pointer over the cards, then scroll the wheel. | The card under the pointer is highlighted; the wheel scrolls and a thin scroll thumb on the right tracks it. |
+| 10 | Click a card, or highlight one and press `Enter`. | The panel closes and the notification is opened as if its popup had been clicked. |
+| 11 | Open it, then click another window. | The panel closes. |
+| 12 | Open it, then run `mnotify --history` again. | The panel closes (the key binding toggles it). `mnotify --dismiss` also closes it. |
+| 13 | Set `position.corner = "top-center"` (or start with `--corner top-left`), then open the panel. | It opens there, `position.margin` from the edges. With `position.monitor = "primary"` it opens on the primary monitor wherever the pointer is. |
+| 14 | Open it on a monitor at 150 % scaling. | Text, icons and spacing are scaled, and icons are sharp. |
+| 15 | Open it with no stored notifications. | *No notifications*, with a bell. |
+| 16 | Set a light theme (`bg = "#eff1f5"`, `fg = "#4c4f69"`, `dim = "#6c6f85"`, `border = "#bcc0cc"`, `info = "#1e66f5"`), `corners = "square"` and `font = "Consolas"`, then open the panel. | A light panel with square cards and search box, text in Consolas, and a blue outline on the highlighted card. Headings and footer hints stay readable. |
 
 ## Configuration
 

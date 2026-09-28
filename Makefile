@@ -1,7 +1,7 @@
 CC       = x86_64-w64-mingw32-gcc
 WINDRES  = x86_64-w64-mingw32-windres
 
-VERSION  = 0.3.0
+VERSION  = 0.4.0
 
 VER_MAJOR := $(word 1,$(subst ., ,$(VERSION)))
 VER_MINOR := $(word 2,$(subst ., ,$(VERSION)))
@@ -33,6 +33,9 @@ MNOTIFY_SRCS = $(SRC_DIR)/mnotify.c    \
                $(SRC_DIR)/menu.c       \
                $(SRC_DIR)/toast_xml.c  \
                $(SRC_DIR)/toasts.c     \
+               $(SRC_DIR)/history.c    \
+               $(SRC_DIR)/icons.c      \
+               $(SRC_DIR)/history_list.c \
                $(SRC_DIR)/activate.c   \
                $(SRC_DIR)/config.c     \
                $(SRC_DIR)/lua_api.c    \
@@ -85,7 +88,7 @@ DIST_FILES = README.md CHANGELOG.md MANUAL-TESTS.md LICENSE THIRD-PARTY-NOTICES.
 HOST_CC   = cc
 TEST_DIR  = test
 TEST_BINS = $(TEST_DIR)/test_tray_proto $(TEST_DIR)/test_toast_xml \
-            $(TEST_DIR)/test_lua_api $(TEST_DIR)/test_anim
+            $(TEST_DIR)/test_lua_api $(TEST_DIR)/test_anim $(TEST_DIR)/test_history_list
 
 HOST_LUA_DIR  = $(TEST_DIR)/lua-host
 HOST_LUA_OBJS = $(patsubst $(LUA_DIR)/%.c,$(HOST_LUA_DIR)/%.o,$(LUA_SRCS))
@@ -126,6 +129,10 @@ $(SRC_DIR)/toast_xml.o: $(SRC_DIR)/toast_xml.c $(SRC_DIR)/toast_xml.h
 	@echo "  CC    $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(SRC_DIR)/history_list.o: $(SRC_DIR)/history_list.c $(SRC_DIR)/history_list.h
+	@echo "  CC    $<"
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(SRC_DIR)/lua_api.o: $(SRC_DIR)/lua_api.c $(SRC_DIR)/lua_api.h $(SRC_DIR)/config_types.h
 	@echo "  CC    $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -135,7 +142,7 @@ $(SRC_DIR)/anim.o: $(SRC_DIR)/anim.c $(SRC_DIR)/anim.h $(SRC_DIR)/config_types.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/mnotify.h $(SRC_DIR)/tray_proto.h $(SRC_DIR)/toast_xml.h $(SRC_DIR)/log.h \
-                $(SRC_DIR)/config_types.h $(SRC_DIR)/lua_api.h $(SRC_DIR)/anim.h
+                $(SRC_DIR)/config_types.h $(SRC_DIR)/lua_api.h $(SRC_DIR)/anim.h $(SRC_DIR)/history_list.h
 	@echo "  CC    $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -183,6 +190,10 @@ $(TEST_DIR)/test_lua_api: $(TEST_DIR)/test_lua_api.c $(TEST_DIR)/tests.h $(SRC_D
 $(TEST_DIR)/test_anim: $(TEST_DIR)/test_anim.c $(TEST_DIR)/tests.h $(SRC_DIR)/anim.c $(SRC_DIR)/anim.h $(SRC_DIR)/config_types.h
 	@echo "  HOSTCC $@"
 	$(HOST_CC) -O1 -Wall -Wextra -I$(SRC_DIR) -o $@ $(TEST_DIR)/test_anim.c $(SRC_DIR)/anim.c
+
+$(TEST_DIR)/test_history_list: $(TEST_DIR)/test_history_list.c $(TEST_DIR)/tests.h $(SRC_DIR)/history_list.c $(SRC_DIR)/history_list.h
+	@echo "  HOSTCC $@"
+	$(HOST_CC) -O1 -Wall -Wextra -I$(SRC_DIR) -o $@ $(TEST_DIR)/test_history_list.c $(SRC_DIR)/history_list.c -lm
 
 test: $(TEST_BINS)
 	@echo "  TEST"

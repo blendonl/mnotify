@@ -5,6 +5,51 @@ All notable changes to mnotify are documented here. This project adheres to
 Sections after 0.1.0 are generated from commit messages; see *Releases* in the
 README.
 
+## 0.4.0
+
+### Added
+
+- Redesign --history as a searchable panel with app icons (462f385)
+
+  mnotify --history opened a plain menu at the pointer: 40 rows of
+  "App - Title: body", no icons and no way to find an older notification.
+  It now opens a panel in the notification corner, in the same palette as
+  the popups.
+
+  - Type to search. Every word has to appear in the app, title or text,
+    ignoring case and accents. The header reads "N of M" while filtering,
+    and Ctrl+Backspace deletes a word.
+  - Each card shows the app's icon from its Start menu entry or
+    executable, loaded one at a time once the panel is up and cached per
+    app; apps without one get a coloured initial. The time reads
+    "Just now", "12 min ago" or the clock time, and the text wraps to two
+    lines ending in an ellipsis.
+  - Notifications are grouped under Today, Yesterday and weekday headings,
+    and up to 200 are listed instead of 40.
+  - Up/Down, PgUp/PgDn, Ctrl+Home/End, hovering and the wheel move through
+    them; Enter or a click opens one as the menu did. Esc clears the
+    search, then closes the panel; clicking elsewhere closes it, and
+    running mnotify --history again toggles it. --dismiss and --quit
+    close it.
+  - Cards and the search box have antialiased rounded corners, which GDI's
+    RoundRect cannot draw. Scrolling, line breaking, search words and
+    corner coverage live in history_list.c with host-side tests.
+
+- Make the history panel follow the config (a4e9652)
+
+  The panel had its own copy of the default colours and always opened in
+  one of four corners. It now takes the same settings as the popups when
+  it opens:
+
+  - position.corner (including top-center and bottom-center),
+    position.monitor and position.margin decide where it opens.
+  - theme.bg, fg, dim, border and info colour it; the panel background,
+    raised surfaces and muted text are shades between bg and fg, so light
+    themes stay readable.
+  - theme.font sets the typeface, theme.corners rounds or squares the
+    window, cards, search box and keycaps, and theme.border_none drops
+    the window border.
+
 ## 0.3.0
 
 ### Added
