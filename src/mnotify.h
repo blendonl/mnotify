@@ -9,6 +9,7 @@
 #include <string.h>
 #include <wchar.h>
 
+#include "config_types.h"
 #include "log.h"
 #include "toast_xml.h"
 #include "tray_proto.h"
@@ -34,6 +35,8 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define WM_MNOTIFY_QUIT      (WM_APP + 3)
 #define WM_MNOTIFY_TOAST_FOCUS (WM_APP + 4)
 #define WM_MNOTIFY_HISTORY   (WM_APP + 5)
+#define WM_MNOTIFY_RELOAD    (WM_APP + 6)
+#define WM_MNOTIFY_CONFIG_CHANGED (WM_APP + 7)
 
 #define MNOTIFY_HISTORY_TOGGLE 0
 #define MNOTIFY_HISTORY_OPEN   1
@@ -43,32 +46,17 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define MNOTIFY_APP_CAP      96
 #define MNOTIFY_TITLE_CAP    TRAY_TITLE_CAP
 #define MNOTIFY_TEXT_CAP     TRAY_INFO_CAP
-#define MNOTIFY_MAX_POPUPS   5
+#define MNOTIFY_MAX_POPUPS   CONFIG_MAX_VISIBLE
 #define MNOTIFY_AUMID_CAP    256
 #define MNOTIFY_LAUNCH_CAP   TOAST_LAUNCH_CAP
 #define MNOTIFY_HISTORY_MAX  200
-
-#define MNOTIFY_DEFAULT_TIMEOUT_MS 6000
-#define MNOTIFY_LONG_TIMEOUT_MS    25000
-
-typedef enum {
-    NOTE_INFO = 0,
-    NOTE_WARN,
-    NOTE_ERROR,
-} NoteKind;
-
-typedef enum {
-    CORNER_BOTTOM_RIGHT = 0,
-    CORNER_TOP_RIGHT,
-    CORNER_BOTTOM_LEFT,
-    CORNER_TOP_LEFT,
-} Corner;
 
 typedef enum {
     NOTE_FROM_SEND = 0,
     NOTE_FROM_TRAY,
     NOTE_FROM_TOAST,
     NOTE_FROM_BACKLOG,
+    NOTE_FROM_MNOTIFY,
 } NoteSource;
 
 typedef struct {
@@ -85,7 +73,12 @@ typedef struct {
     wchar_t     text[MNOTIFY_TEXT_CAP];
     NoteKind    kind;
     NoteSource  source;
-    int         timeout_ms;
+    bool        long_duration;
+    bool        has_timeout;
+    Timeout     timeout;
+    bool        has_accent;
+    uint32_t    accent;
+    bool        internal;
     TrayIcon    icon;
     ToastTarget toast;
 } Note;
@@ -111,13 +104,23 @@ typedef struct {
 } SendPayload;
 
 typedef struct {
+    bool     timeout_set;
+    Timeout  timeout;
+    bool     corner_set;
+    Corner   corner;
+    bool     level_set;
+    LogLevel level;
+} Overrides;
+
+typedef struct {
     HINSTANCE hinst;
     HWND      control;
     HWND      tray;
     UINT      taskbar_created;
     TrayTable table;
-    int       timeout_ms;
-    Corner    corner;
+    Config    cfg;
+    unsigned  cfg_generation;
+    Overrides overrides;
 } Mnotify;
 
 extern Mnotify mn;
@@ -127,6 +130,8 @@ static inline HWND hwnd_of(uint32_t value) {
 }
 
 void mnotify_copy_w(wchar_t *out, size_t cap, const wchar_t *src);
+bool mnotify_utf8_to_wide(const char *s, wchar_t *out, size_t cap);
+bool mnotify_wide_to_utf8(const wchar_t *s, char *out, size_t cap);
 int  mnotify_scale(int px, UINT dpi);
 
 bool tray_host_init(void);
@@ -146,9 +151,18 @@ int  toasts_history(HistoryItem *items, int cap);
 void toast_activate(const ToastTarget *target);
 void toast_focus_pending(void);
 
+void config_init(void);
+void config_reload(void);
+void config_on_file_changed(unsigned generation);
+void config_shutdown(void);
+bool config_check(char *out, size_t cap);
+bool config_filter(Note *note);
+
 bool popup_init(void);
 void popup_shutdown(void);
-void popup_show(const Note *note);
+bool    popup_show(const Note *note);
+void    popup_config_changed(void);
+Timeout popup_timeout_for(const Note *note);
 void popup_hide_for(const TrayIdentity *id);
 void popup_dismiss_all(void);
 

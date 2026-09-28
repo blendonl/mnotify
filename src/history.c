@@ -1185,8 +1185,8 @@ static void build_panel(void) {
     int  w      = scaled(PANEL_WIDTH);
     int  h      = scaled(PANEL_MAX_HEIGHT);
     if (h > work.bottom - work.top - 2 * margin) h = work.bottom - work.top - 2 * margin;
-    bool top    = mn.corner == CORNER_TOP_RIGHT || mn.corner == CORNER_TOP_LEFT;
-    bool right  = mn.corner == CORNER_TOP_RIGHT || mn.corner == CORNER_BOTTOM_RIGHT;
+    bool top    = mn.cfg.position.corner == CORNER_TOP_RIGHT || mn.cfg.position.corner == CORNER_TOP_LEFT;
+    bool right  = mn.cfg.position.corner == CORNER_TOP_RIGHT || mn.cfg.position.corner == CORNER_BOTTOM_RIGHT;
     int  x      = right ? work.right - margin - w : work.left + margin;
     int  y      = top ? work.top + margin : work.bottom - margin - h;
 

@@ -9,6 +9,8 @@ typedef enum {
     ACTION_HISTORY,
     ACTION_DISMISS,
     ACTION_QUIT,
+    ACTION_RELOAD,
+    ACTION_CHECK,
 } Action;
 
 typedef struct {
@@ -16,8 +18,10 @@ typedef struct {
     wchar_t  title[MNOTIFY_TITLE_CAP];
     wchar_t  text[MNOTIFY_TEXT_CAP];
     NoteKind kind;
-    int      timeout_ms;
+    Timeout  timeout;
+    bool     timeout_set;
     Corner   corner;
+    bool     corner_set;
     LogLevel level;
     bool     level_set;
     bool     version;
@@ -33,6 +37,34 @@ void mnotify_copy_w(wchar_t *out, size_t cap, const wchar_t *src) {
     if (len >= cap) len = cap - 1;
     memcpy(out, src, len * sizeof(wchar_t));
     out[len] = L'\0';
+}
+
+bool mnotify_utf8_to_wide(const char *s, wchar_t *out, size_t cap) {
+    out[0] = L'\0';
+    int need = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    if (need <= 0) return false;
+    if ((size_t)need <= cap) {
+        MultiByteToWideChar(CP_UTF8, 0, s, -1, out, (int)cap);
+        return true;
+    }
+
+    wchar_t *all = (wchar_t *)malloc((size_t)need * sizeof(wchar_t));
+    if (!all) return false;
+    MultiByteToWideChar(CP_UTF8, 0, s, -1, all, need);
+
+    size_t keep = cap - 1;
+    if (keep && IS_HIGH_SURROGATE(all[keep - 1])) keep--;
+    memcpy(out, all, keep * sizeof(wchar_t));
+    out[keep] = L'\0';
+    free(all);
+    return false;
+}
+
+bool mnotify_wide_to_utf8(const wchar_t *s, char *out, size_t cap) {
+    out[0] = '\0';
+    if (WideCharToMultiByte(CP_UTF8, 0, s, -1, out, (int)cap, NULL, NULL) > 0) return true;
+    out[0] = '\0';
+    return false;
 }
 
 int mnotify_scale(int px, UINT dpi) {
@@ -72,14 +104,27 @@ static bool parse_corner(const wchar_t *name, Corner *out) {
     if (match(name, L"top-right"))    { *out = CORNER_TOP_RIGHT;    return true; }
     if (match(name, L"bottom-left"))  { *out = CORNER_BOTTOM_LEFT;  return true; }
     if (match(name, L"top-left"))     { *out = CORNER_TOP_LEFT;     return true; }
+    if (match(name, L"top-center"))   { *out = CORNER_TOP_CENTER;   return true; }
+    if (match(name, L"bottom-center")) { *out = CORNER_BOTTOM_CENTER; return true; }
     return false;
+}
+
+static bool parse_timeout(const wchar_t *value, Timeout *out) {
+    if (match(value, L"forever")) {
+        out->forever = true;
+        out->ms      = 0;
+        return true;
+    }
+    int ms = _wtoi(value);
+    if (ms <= 0) return false;
+    out->forever = false;
+    out->ms      = ms;
+    return true;
 }
 
 static void parse_args(Options *opt) {
     memset(opt, 0, sizeof *opt);
-    opt->timeout_ms = MNOTIFY_DEFAULT_TIMEOUT_MS;
-    opt->corner     = CORNER_BOTTOM_RIGHT;
-    opt->level      = LOG_INFO;
+    opt->level = LOG_INFO;
 
     int       argc = 0;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -101,12 +146,12 @@ static void parse_args(Options *opt) {
             if (!parse_kind(next, &opt->kind)) opt->invalid = true;
             i++;
         } else if (match(a, L"--corner") && next) {
-            if (!parse_corner(next, &opt->corner)) opt->invalid = true;
+            if (parse_corner(next, &opt->corner)) opt->corner_set = true;
+            else                                  opt->invalid = true;
             i++;
         } else if (match(a, L"--timeout") && next) {
-            int ms = _wtoi(next);
-            if (ms > 0) opt->timeout_ms = ms;
-            else        opt->invalid = true;
+            if (parse_timeout(next, &opt->timeout)) opt->timeout_set = true;
+            else                                    opt->invalid = true;
             i++;
         } else if (match(a, L"--log-level") && next) {
             char name[32];
@@ -119,6 +164,8 @@ static void parse_args(Options *opt) {
         else if (match(a, L"--history")) opt->action  = ACTION_HISTORY;
         else if (match(a, L"--dismiss")) opt->action  = ACTION_DISMISS;
         else if (match(a, L"--quit"))    opt->action  = ACTION_QUIT;
+        else if (match(a, L"--reload"))  opt->action  = ACTION_RELOAD;
+        else if (match(a, L"--check"))   opt->action  = ACTION_CHECK;
         else if (match(a, L"--version")) opt->version = true;
         else if (match(a, L"--help") || match(a, L"-h")) opt->usage = true;
         else opt->invalid = true;
@@ -136,11 +183,14 @@ static const char *USAGE =
     "  mnotify --tray                  open a menu of tray icons at the cursor\n"
     "  mnotify --history               open or close the notification history; type to search\n"
     "  mnotify --dismiss               close every notification on screen\n"
+    "  mnotify --reload                reload the config in the running instance\n"
+    "  mnotify --check                 load the config, report errors and exit\n"
     "  mnotify --quit                  stop the running instance\n"
     "\n"
-    "  Read when the host starts:\n"
-    "  --corner <where>                bottom-right|top-right|bottom-left|top-left\n"
-    "  --timeout <ms>                  how long a notification stays up (6000)\n"
+    "  The config is %APPDATA%\\mnotify\\init.lua. When the host starts, these override it:\n"
+    "  --corner <where>                bottom-right|top-right|bottom-left|top-left|\n"
+    "                                  top-center|bottom-center\n"
+    "  --timeout <ms>|forever          how long a notification stays up\n"
     "  --log-level <lvl>               error|warn|info|debug|trace\n"
     "\n"
     "  mnotify --version               print the version and exit";
@@ -197,6 +247,9 @@ static int run_as_client(const Options *opt) {
     case ACTION_QUIT:
         PostMessageW(resident, WM_MNOTIFY_QUIT, 0, 0);
         return 0;
+    case ACTION_RELOAD:
+        PostMessageW(resident, WM_MNOTIFY_RELOAD, 0, 0);
+        return 0;
     default:
         return 0;
     }
@@ -252,6 +305,12 @@ static LRESULT CALLBACK control_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     case WM_MNOTIFY_TOAST_FOCUS:
         toast_focus_pending();
         return 0;
+    case WM_MNOTIFY_RELOAD:
+        config_reload();
+        return 0;
+    case WM_MNOTIFY_CONFIG_CHANGED:
+        config_on_file_changed((unsigned)wp);
+        return 0;
     case WM_ENDSESSION:
         if (wp) PostQuitMessage(0);
         return 0;
@@ -280,7 +339,7 @@ static bool control_init(void) {
 
     static const UINT allowed[] = {
         WM_COPYDATA, WM_MNOTIFY_TRAY_MENU, WM_MNOTIFY_DISMISS, WM_MNOTIFY_QUIT,
-        WM_MNOTIFY_HISTORY,
+        WM_MNOTIFY_HISTORY, WM_MNOTIFY_RELOAD,
     };
     for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
         ChangeWindowMessageFilterEx(mn.control, allowed[i], MSGFLT_ALLOW, NULL);
@@ -304,6 +363,12 @@ static int run(HINSTANCE hinst) {
     if (opt.invalid) { console_print(USAGE);           return 1; }
     if (opt.usage)   { console_print(USAGE);           return 0; }
     if (opt.version) { console_print(MNOTIFY_VERSION); return 0; }
+    if (opt.action == ACTION_CHECK) {
+        char report[1024];
+        bool ok = config_check(report, sizeof report);
+        console_print(report);
+        return ok ? 0 : 1;
+    }
 
     HANDLE once = CreateMutexW(NULL, TRUE, MNOTIFY_MUTEX);
     if (once && GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -312,7 +377,7 @@ static int run(HINSTANCE hinst) {
         return rc;
     }
 
-    if (opt.action == ACTION_QUIT || opt.action == ACTION_DISMISS) {
+    if (opt.action == ACTION_QUIT || opt.action == ACTION_DISMISS || opt.action == ACTION_RELOAD) {
         if (once) CloseHandle(once);
         return 0;
     }
@@ -325,13 +390,23 @@ static int run(HINSTANCE hinst) {
     log_init(L"mnotify", opt.level_set ? opt.level : LOG_INFO);
     log_msg(LOG_INFO, L"mnotify %hs starting", MNOTIFY_VERSION);
 
-    mn.timeout_ms = opt.timeout_ms;
-    mn.corner     = opt.corner;
+    mn.overrides = (Overrides){
+        .timeout_set = opt.timeout_set,
+        .timeout     = opt.timeout,
+        .corner_set  = opt.corner_set,
+        .corner      = opt.corner,
+        .level_set   = opt.level_set,
+        .level       = opt.level,
+    };
+    config_defaults(&mn.cfg);
 
     HRESULT com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
     int rc = 1;
-    if (!control_init() || !popup_init() || !history_init()) {
+    bool windows = control_init() && popup_init() && history_init();
+    if (windows) config_init();
+
+    if (!windows) {
         console_print("error: mnotify could not create its windows; see %LOCALAPPDATA%\\mnotify\\mnotify.log");
     } else if (!tray_host_init()) {
         console_print(tray_host_other_tray_exists()
@@ -358,6 +433,7 @@ static int run(HINSTANCE hinst) {
     tray_host_shutdown();
     history_shutdown();
     popup_shutdown();
+    config_shutdown();
     control_shutdown();
     if (SUCCEEDED(com)) CoUninitialize();
     if (once) CloseHandle(once);

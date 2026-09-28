@@ -58,6 +58,37 @@ function Add-UserPath {
     return $true
 }
 
+function Install-MnotifyConfig {
+    param([string]$Payload)
+    $shipped = Join-Path $Payload 'config\init.lua'
+    if (-not (Test-Path $shipped)) {
+        return $null
+    }
+
+    $configDir = Join-Path $env:APPDATA 'mnotify'
+    New-Item -ItemType Directory -Force $configDir | Out-Null
+
+    $target = Join-Path $configDir 'init.lua'
+    if (-not (Test-Path $target)) {
+        Copy-Item $shipped $target
+        $note = "Wrote the default config to $target"
+    } elseif ((Get-FileHash $target).Hash -ne (Get-FileHash $shipped).Hash) {
+        Copy-Item $shipped (Join-Path $configDir 'init.lua.new') -Force
+        $note = "Kept your $target; this release's default is beside it as init.lua.new"
+    } else {
+        $note = "Your config is $target"
+    }
+
+    $luarc = Join-Path $configDir '.luarc.json'
+    if (-not (Test-Path $luarc)) {
+        Copy-Item (Join-Path $Payload 'config\.luarc.json') $luarc
+    }
+    $meta = Join-Path $configDir 'meta'
+    New-Item -ItemType Directory -Force $meta | Out-Null
+    Copy-Item (Join-Path $Payload 'meta\*') $meta -Force
+    return $note
+}
+
 function Install-Mnotify {
     param([string]$Version, [string]$InstallDir)
     $ErrorActionPreference = 'Stop'
@@ -82,6 +113,7 @@ function Install-Mnotify {
         $wasRunning = Stop-InstalledMnotify $exe
         New-Item -ItemType Directory -Force $InstallDir | Out-Null
         Copy-Item (Join-Path $payload.FullName '*') $InstallDir -Recurse -Force
+        $configNote = Install-MnotifyConfig $payload.FullName
     } finally {
         Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -92,6 +124,9 @@ function Install-Mnotify {
     }
 
     Write-Host "Installed mnotify $($release.Tag) to $InstallDir"
+    if ($configNote) {
+        Write-Host $configNote
+    }
     if ($addedToPath) {
         Write-Host "Added it to your PATH. Terminals that were already open need restarting to see it."
     }

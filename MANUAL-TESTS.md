@@ -109,6 +109,35 @@ above), or use the ones Windows is already holding.
 | 14 | Open it on a monitor at 150 % scaling. | Text, icons and spacing are scaled, and icons are sharp. |
 | 15 | Open it with no stored notifications. | *No notifications*, with a bell. |
 
+## Configuration
+
+Edit `%APPDATA%\mnotify\init.lua` (copy `config\init.lua` there first if the
+installer has not) while mnotify runs, and send notifications with
+`mnotify --send "Test" "some body text"` to see each change.
+
+| # | Test | Expected |
+|---|------|----------|
+| 1 | `mnotify --check` with the default config. | Prints `ok:` and the path; exit code 0. |
+| 2 | Change `corner = "middle"`, then `mnotify --check`. | Prints `FAILED:` with `init.lua:<line>: … unknown corner 'middle' (bottom-right|…)`; exit code 1. |
+| 3 | Save that broken file while mnotify runs. | A red *Config error, previous config kept* notification with the same message. New notifications still look as before. |
+| 4 | Fix it to `corner = "top-center"` and save. | Within a second, new notifications stack from the top centre. No restart. |
+| 5 | Set `theme.bg = "#303446"`, `opacity = 220`, `corners = "square"`, `font = "Consolas"`, `width = 460`, `accent = "none"` and save. | Notifications already on screen restyle at once; they are wider, square, see-through, in Consolas, with no bar. |
+| 6 | With the default config, check the corners of a notification on Windows 11. | Rounded, with the grey border. |
+| 7 | Set `behavior.timeout = "forever"`. | A notification stays until clicked, right-clicked or `mnotify --dismiss`. |
+| 8 | With `max_visible = 5`, show five, then set `max_visible = 2`. | The three oldest close; two remain. |
+| 9 | Default animations: send a notification, then right-click it. | It slides in a short way from the right edge while fading in, and fades out. The notifications behind it glide into place. |
+| 10 | Set `open = "fade"`, `close = "slide"`, `duration = 600`, `easing = "linear"`. | Slow fade in; on close it slides back out toward the edge while fading. |
+| 11 | Set `animation.duration = 0`. | Notifications appear and vanish at once, as before this feature. |
+| 12 | Set `position.monitor = "primary"` on a multi-monitor setup. | Notifications appear on the primary monitor wherever the pointer is. |
+| 13 | Add `mnotify.on("notify", function(n) if n.title == "drop" then return false end n.timeout = "forever" end)`. `mnotify --send drop`, then `mnotify --send keep`. | *drop* never appears; *keep* stays until clicked. |
+| 14 | Hook that drops balloons: `if n.source == "balloon" then return false end`. Run the tray test app. | No notification. The console prints `balloon closed` once. |
+| 15 | Hook with `error("boom")`. | Notifications still show, unchanged. The log has `notify hook failed … boom`. |
+| 16 | Save `while true do end` as the config. | Within a second, *Config error, previous config kept … took too long*. mnotify and the tray keep working. |
+| 17 | `mnotify.config.auto_reload(false)`, save, then edit something else and save. | The second edit does nothing until `mnotify --reload`. |
+| 18 | `mnotify --reload` with mnotify not running. | Exits quietly with code 0; nothing starts. |
+| 19 | Start with `--corner top-left --timeout 2000` and a config that says `bottom-right`. | Top-left, 2 s, and still so after saving the config again. |
+| 20 | Delete `init.lua` while mnotify runs. | The defaults come back. |
+
 ## Tray menu
 
 | # | Test | Expected |
