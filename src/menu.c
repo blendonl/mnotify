@@ -122,34 +122,3 @@ void menu_show_tray(void) {
 
     free(slots);
 }
-
-void menu_show_history(void) {
-    if (s_menu_open) return;
-
-    HistoryItem *items = (HistoryItem *)calloc(MNOTIFY_HISTORY_MAX, sizeof *items);
-    if (!items) return;
-
-    HMENU menu = CreatePopupMenu();
-    if (!menu) { free(items); return; }
-
-    int count = toasts_history(items, MNOTIFY_HISTORY_MAX);
-    if (count <= 0)
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
-                    count < 0 ? L"Notification history is unavailable" : L"No notifications");
-
-    for (int i = 0; i < count; i++) {
-        wchar_t label[MNOTIFY_LABEL_CAP * 2];
-        escape_ampersands(items[i].label, label, MNOTIFY_LABEL_CAP * 2);
-
-        wchar_t entry[MNOTIFY_LABEL_CAP * 2 + MNOTIFY_WHEN_CAP + 2];
-        _snwprintf(entry, sizeof entry / sizeof entry[0], L"%ls\t%ls", label, items[i].when);
-        entry[sizeof entry / sizeof entry[0] - 1] = L'\0';
-        AppendMenuW(menu, MF_STRING, (UINT_PTR)(i + 1), entry);
-    }
-
-    log_msg(LOG_DEBUG, L"menu: opening the history with %d notification(s)", count);
-    UINT cmd = track_menu(menu);
-    if (cmd >= 1 && (int)cmd <= count) toast_activate(&items[cmd - 1].target);
-
-    free(items);
-}

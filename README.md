@@ -61,7 +61,7 @@ mnotify                         host the tray (nothing happens if it already is)
 mnotify --send <title> [text]   show a notification
         --kind info|warn|error    its accent colour
 mnotify --tray                  open a menu of tray icons at the cursor
-mnotify --history               open a menu of recent notifications at the cursor
+mnotify --history               open or close the notification history; type to search
 mnotify --dismiss               close every notification on screen
 mnotify --quit                  stop the running instance
 
@@ -87,13 +87,19 @@ then on:
 - **Toasts you missed** pop up when mnotify starts, the way Explorer shows them
   when it starts: the ones that arrived while mnotify was not running, such as
   overnight or before you signed in. It shows the newest four and a note saying
-  how many more there are. Clicking the note lists them all. mnotify remembers
+  how many more there are. Clicking the note opens the history. mnotify remembers
   the last toast it handled, so nothing is shown twice. On its first run, it
   catches up on everything Windows is holding.
-- **`mnotify --history`** opens a menu of the notifications Windows is holding,
-  newest first, with the time each one arrived. Windows keeps them for up to
-  three days, 20 per app. Choosing one does what clicking the notification
-  would have done.
+- **`mnotify --history`** opens a panel in the chosen corner listing the
+  notifications Windows is holding, newest first and grouped by day. Each shows
+  the app's icon (or a coloured initial when the app has none), its name, when
+  it arrived, the title and the first two lines of text. Windows keeps them for
+  up to three days, 20 per app. Type to search: every word has to appear in the
+  app, title or text, ignoring case and accents. `↑` `↓`, `PgUp` `PgDn`,
+  `Ctrl+Home` `Ctrl+End` or the mouse pick one; `Enter` or a click does what
+  clicking the notification would have done. `Esc` clears the search, then
+  closes the panel; clicking elsewhere or running `mnotify --history` again
+  closes it too.
 - **A balloon** becomes a notification in the chosen corner, naming the app that
   sent it. Left-click it to do what clicking the balloon would have done (the
   app gets `NIN_BALLOONUSERCLICK`), right-click to dismiss it. Hovering keeps it

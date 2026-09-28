@@ -134,7 +134,7 @@ static const char *USAGE =
     "  mnotify --send <title> [text]   show a notification\n"
     "          --kind info|warn|error    its accent colour\n"
     "  mnotify --tray                  open a menu of tray icons at the cursor\n"
-    "  mnotify --history               open a menu of recent notifications at the cursor\n"
+    "  mnotify --history               open or close the notification history; type to search\n"
     "  mnotify --dismiss               close every notification on screen\n"
     "  mnotify --quit                  stop the running instance\n"
     "\n"
@@ -188,7 +188,7 @@ static int run_as_client(const Options *opt) {
         GetWindowThreadProcessId(resident, &pid);
         if (pid) AllowSetForegroundWindow(pid);
         PostMessageW(resident, opt->action == ACTION_TRAY ? WM_MNOTIFY_TRAY_MENU : WM_MNOTIFY_HISTORY,
-                     0, 0);
+                     MNOTIFY_HISTORY_TOGGLE, 0);
         return 0;
     }
     case ACTION_DISMISS:
@@ -236,14 +236,17 @@ static LRESULT CALLBACK control_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         menu_show_tray();
         return 0;
     case WM_MNOTIFY_HISTORY:
-        menu_show_history();
+        if (wp == MNOTIFY_HISTORY_OPEN) history_show();
+        else                            history_toggle();
         return 0;
     case WM_MNOTIFY_DISMISS:
         EndMenu();
+        history_close();
         popup_dismiss_all();
         return 0;
     case WM_MNOTIFY_QUIT:
         EndMenu();
+        history_close();
         PostQuitMessage(0);
         return 0;
     case WM_MNOTIFY_TOAST_FOCUS:
@@ -328,7 +331,7 @@ static int run(HINSTANCE hinst) {
     HRESULT com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
     int rc = 1;
-    if (!control_init() || !popup_init()) {
+    if (!control_init() || !popup_init() || !history_init()) {
         console_print("error: mnotify could not create its windows; see %LOCALAPPDATA%\\mnotify\\mnotify.log");
     } else if (!tray_host_init()) {
         console_print(tray_host_other_tray_exists()
@@ -353,6 +356,7 @@ static int run(HINSTANCE hinst) {
 
     toasts_shutdown();
     tray_host_shutdown();
+    history_shutdown();
     popup_shutdown();
     control_shutdown();
     if (SUCCEEDED(com)) CoUninitialize();

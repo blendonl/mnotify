@@ -16,5 +16,6 @@ Thumbs.db
 
 /test/test_tray_proto
 /test/test_toast_xml
+/test/test_history_list
 
 .claude/
