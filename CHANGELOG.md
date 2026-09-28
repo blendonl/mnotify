@@ -5,6 +5,43 @@ All notable changes to mnotify are documented here. This project adheres to
 Sections after 0.1.0 are generated from commit messages; see *Releases* in the
 README.
 
+## 0.3.0
+
+### Added
+
+- Configure mnotify with a Lua config (c3128b7)
+
+  mnotify reads %APPDATA%\mnotify\init.lua, falling back to config\init.lua
+  next to the exe, the way mshell finds its own. Every setting that was
+  hard-coded is now in it, and saving the file reloads it.
+
+  - behavior: timeout and long_timeout in ms or "forever", pause on hover
+    and its grace, max_visible (up to 10), holding toasts while busy, and
+    catching up on missed toasts.
+  - position: the four corners plus top-center and bottom-center, the
+    monitor under the cursor or the primary one, margin and spacing.
+  - theme: every colour, opacity, corner style, border, font and sizes,
+    width, padding, line spacing, body lines and the accent bar.
+  - animation: slide, fade or none to open and close, duration, easing;
+    notifications glide into place when the stack changes.
+  - mnotify.on("notify", fn) edits or drops each notification. A failing
+    hook shows it unchanged; endless loops in the hook or the config are
+    cut off.
+  - A config with an error is rejected whole: the previous one stays and an
+    error notification says why. mnotify --check reports it without the
+    running instance, and mnotify --reload reloads on demand.
+  - --corner, --timeout (now also "forever") and --log-level still work and
+    override the config.
+  - The installer puts the default config, .luarc.json and LuaLS types in
+    %APPDATA%\mnotify, never overwriting an existing init.lua.
+
+### Other
+
+- **build:** Vendor Lua 5.4.7 (b82b9bd)
+
+  The same PUC Lua sources mshell vendors, so both read their config with
+  the same interpreter. THIRD-PARTY-NOTICES.md carries Lua's MIT license.
+
 ## 0.2.0
 
 ### Added
