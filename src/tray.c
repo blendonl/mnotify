@@ -112,7 +112,7 @@ static void show_balloon(const TrayEffect *effect) {
     Note note;
     memset(&note, 0, sizeof note);
     note.kind      = kind_of(effect->info_flags);
-    note.from_tray = true;
+    note.source    = NOTE_FROM_TRAY;
     note.icon      = effect->icon;
     mnotify_copy_w(note.title, MNOTIFY_TITLE_CAP, (const wchar_t *)effect->title);
     mnotify_copy_w(note.text,  MNOTIFY_TEXT_CAP,  (const wchar_t *)effect->text);
@@ -157,7 +157,40 @@ static LRESULT on_notify_icon(const COPYDATASTRUCT *cds) {
     return ok ? TRUE : FALSE;
 }
 
+static bool screen_saver_running(void) {
+    BOOL running = FALSE;
+    return SystemParametersInfoW(SPI_GETSCREENSAVERRUNNING, 0, &running, 0) && running;
+}
+
+static bool presentation_mode_on(void) {
+    HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, PRESENTATION_MODE_EVENT);
+    if (!event) return false;
+    CloseHandle(event);
+    return true;
+}
+
+static bool exclusive_fullscreen_active(void) {
+    HANDLE mutex = OpenMutexW(SYNCHRONIZE, FALSE, DDRAW_EXCLUSIVE_MUTEX);
+    if (!mutex) return false;
+    DWORD wait = WaitForSingleObject(mutex, 0);
+    if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED) ReleaseMutex(mutex);
+    CloseHandle(mutex);
+    return wait == WAIT_TIMEOUT;
+}
+
+QUERY_USER_NOTIFICATION_STATE tray_host_user_state(void) {
+    if (screen_saver_running())        return QUNS_NOT_PRESENT;
+    if (presentation_mode_on())        return QUNS_PRESENTATION_MODE;
+    if (exclusive_fullscreen_active()) return QUNS_RUNNING_D3D_FULL_SCREEN;
+    return QUNS_ACCEPTS_NOTIFICATIONS;
+}
+
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_TRAY_QUERY_NOTIFICATION_STATE) {
+        QUERY_USER_NOTIFICATION_STATE state = tray_host_user_state();
+        log_msg(LOG_TRACE, L"tray: user notification state %d", (int)state);
+        return state;
+    }
     if (msg == WM_COPYDATA) {
         const COPYDATASTRUCT *cds = (const COPYDATASTRUCT *)lp;
         if (!cds || !cds->lpData) return FALSE;
@@ -194,6 +227,7 @@ bool tray_host_init(void) {
     }
 
     ChangeWindowMessageFilterEx(mn.tray, WM_COPYDATA, MSGFLT_ALLOW, NULL);
+    ChangeWindowMessageFilterEx(mn.tray, WM_TRAY_QUERY_NOTIFICATION_STATE, MSGFLT_ALLOW, NULL);
 
     mn.taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
     SendNotifyMessageW(HWND_BROADCAST, mn.taskbar_created, 0, 0);

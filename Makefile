@@ -1,7 +1,7 @@
 CC       = x86_64-w64-mingw32-gcc
 WINDRES  = x86_64-w64-mingw32-windres
 
-VERSION  = 0.1.0
+VERSION  = 0.2.0
 
 VER_MAJOR := $(word 1,$(subst ., ,$(VERSION)))
 VER_MINOR := $(word 2,$(subst ., ,$(VERSION)))
@@ -19,7 +19,8 @@ RCFLAGS  = -DVER_MAJOR=$(VER_MAJOR) \
            -DVER_MINOR=$(VER_MINOR) \
            -DVER_PATCH=$(VER_PATCH)
 
-LDLIBS   = -luser32 -lgdi32 -lshell32 -lversion -ldwmapi -lshcore
+LDLIBS   = -luser32 -lgdi32 -lshell32 -lversion -ldwmapi -lshcore \
+           -lole32 -luuid -lshlwapi -lpropsys
 
 SRC_DIR  = src
 
@@ -28,6 +29,9 @@ MNOTIFY_SRCS = $(SRC_DIR)/mnotify.c    \
                $(SRC_DIR)/tray_proto.c \
                $(SRC_DIR)/popup.c      \
                $(SRC_DIR)/menu.c       \
+               $(SRC_DIR)/toast_xml.c  \
+               $(SRC_DIR)/toasts.c     \
+               $(SRC_DIR)/activate.c   \
                $(SRC_DIR)/log.c
 
 MNOTIFY_OBJS = $(MNOTIFY_SRCS:.c=.o)
@@ -41,7 +45,7 @@ DIST_FILES = README.md CHANGELOG.md MANUAL-TESTS.md LICENSE
 
 HOST_CC   = cc
 TEST_DIR  = test
-TEST_BINS = $(TEST_DIR)/test_tray_proto
+TEST_BINS = $(TEST_DIR)/test_tray_proto $(TEST_DIR)/test_toast_xml
 
 .PHONY: all bump clean dist test print-version
 
@@ -74,7 +78,11 @@ $(SRC_DIR)/tray_proto.o: $(SRC_DIR)/tray_proto.c $(SRC_DIR)/tray_proto.h
 	@echo "  CC    $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(SRC_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/mnotify.h $(SRC_DIR)/tray_proto.h $(SRC_DIR)/log.h
+$(SRC_DIR)/toast_xml.o: $(SRC_DIR)/toast_xml.c $(SRC_DIR)/toast_xml.h
+	@echo "  CC    $<"
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(SRC_DIR)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/mnotify.h $(SRC_DIR)/tray_proto.h $(SRC_DIR)/toast_xml.h $(SRC_DIR)/log.h
 	@echo "  CC    $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -94,6 +102,10 @@ dist: $(TARGET)
 $(TEST_DIR)/test_tray_proto: $(TEST_DIR)/test_tray_proto.c $(TEST_DIR)/tests.h $(SRC_DIR)/tray_proto.c $(SRC_DIR)/tray_proto.h
 	@echo "  HOSTCC $@"
 	$(HOST_CC) -O1 -Wall -Wextra -I$(SRC_DIR) -o $@ $(TEST_DIR)/test_tray_proto.c $(SRC_DIR)/tray_proto.c
+
+$(TEST_DIR)/test_toast_xml: $(TEST_DIR)/test_toast_xml.c $(TEST_DIR)/tests.h $(SRC_DIR)/toast_xml.c $(SRC_DIR)/toast_xml.h
+	@echo "  HOSTCC $@"
+	$(HOST_CC) -O1 -Wall -Wextra -I$(SRC_DIR) -o $@ $(TEST_DIR)/test_toast_xml.c $(SRC_DIR)/toast_xml.c
 
 test: $(TEST_BINS)
 	@echo "  TEST"
