@@ -71,14 +71,19 @@ Send-Toast '<toast><visual><binding template="ToastGeneric"><text>Build finished
 
 | # | Test | Expected |
 |---|------|----------|
-| 1 | Start `mnotify --log-level debug`. | The log says `toasts: watching the Windows notification store`. Toasts already in the store from before are not shown. |
+| 1 | Start `mnotify --log-level debug`. | The log says `toasts: watching the Windows notification store`. |
 | 2 | Run the `Send-Toast` above. | Within half a second, a notification naming *Windows PowerShell · ci*, titled *Build finished*. |
 | 3 | `Send-Toast` with `duration="long"` on `<toast>`. | It stays up for 25 s. |
 | 4 | Send a message to yourself on Discord from another device, with Discord's window not focused. | A notification naming *Discord*. Left-click brings Discord's window forward, or restores it from the tray. |
 | 5 | Get a notification from a site in Chrome. | A notification naming *Google Chrome · the site*. Left-click opens the site in Chrome. |
 | 6 | Turn off banners for an app in Windows' notification settings, then have it notify. | Nothing appears; the debug log says banners are off for it. |
 | 7 | Run a game in exclusive fullscreen and have Discord notify. | Nothing appears over the game. `SHQueryUserNotificationState` reports 3. |
-| 8 | Set `ToastEnabled` to `0` under `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications` and restart mnotify. | A yellow notification says Windows notifications are off. Delete the value afterwards. |
+| 8 | With `mnotify --quit`, send three toasts, then start mnotify again. | All three appear, oldest farthest from the corner. Restarting again shows nothing new. |
+| 9 | Quit mnotify, send seven toasts, start it. | The newest four appear, with a note *3 more notifications* farthest from the corner. Clicking the note opens the history menu. |
+| 10 | `mnotify --history`. | A menu at the pointer lists stored notifications newest first, *App — Title: body* with the arrival time on the right. `Esc` closes it and the window you were in has the keyboard again. |
+| 11 | Pick a Chrome entry in that menu. | Chrome opens that page. |
+| 12 | Hold presentation mode on (`presentationsettings /start`), send a toast, then turn it off. | Nothing appears while it is on. When it goes off, *1 notification while you were busy*. |
+| 13 | Set `ToastEnabled` to `0` under `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications` and restart mnotify. | A yellow notification says Windows notifications are off. Delete the value afterwards. |
 
 ## Tray menu
 

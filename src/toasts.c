@@ -10,6 +10,7 @@
 #define TOAST_POLL_MS       500
 #define TOAST_RETRY_MS      10000
 #define TOAST_APP_CACHE     32
+#define HISTORY_LABEL_CHARS 80
 
 #define SQLITE_BUSY           5
 #define SQLITE_ROW            100
@@ -17,17 +18,21 @@
 #define SQLITE_OPEN_READONLY  0x00000001
 
 #define SYSTEM_TOAST_PREFIX   L"Windows.SystemToast."
+#define MNOTIFY_STATE_KEY     L"Software\\mnotify"
+#define LAST_TOAST_VALUE      L"LastToastId"
 #define TOAST_SETTINGS_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"
 #define STORE_RELATIVE_PATH   L"\\Microsoft\\Windows\\Notifications\\wpndatabase.db"
 
 #define QUERY_DATA_VERSION    "PRAGMA data_version"
 #define QUERY_MAX_ID          "SELECT COALESCE(MAX(Id), 0) FROM Notification"
-#define QUERY_NEW_TOASTS                                                          \
-    "SELECT n.Id, h.PrimaryId, n.Payload, n.ExpiryTime, "                         \
+#define SELECT_TOASTS                                                             \
+    "SELECT n.Id, h.PrimaryId, n.Payload, n.ExpiryTime, n.ArrivalTime, "          \
     "COALESCE((SELECT s.Value FROM HandlerSettings s "                            \
     "WHERE s.HandlerId = h.RecordId AND s.SettingKey = 's:banner'), 1) "          \
     "FROM Notification n JOIN NotificationHandler h ON h.RecordId = n.HandlerId " \
-    "WHERE n.Type = 'toast' AND n.Id > ?1 ORDER BY n.Id"
+    "WHERE n.Type = 'toast' "
+#define QUERY_NEW_TOASTS      SELECT_TOASTS "AND n.Id > ?1 ORDER BY n.Id"
+#define QUERY_HISTORY         SELECT_TOASTS "ORDER BY n.Id DESC"
 
 typedef struct sqlite3      sqlite3;
 typedef struct sqlite3_stmt sqlite3_stmt;
@@ -54,6 +59,7 @@ typedef struct {
     sqlite3_stmt *data_version;
     sqlite3_stmt *max_id;
     sqlite3_stmt *new_toasts;
+    sqlite3_stmt *history;
     long long     version;
     long long     last_id;
     bool          have_baseline;
@@ -63,10 +69,11 @@ typedef struct {
 
 typedef struct {
     long long    id;
+    long long    arrival;
     wchar_t      aumid[MNOTIFY_AUMID_CAP];
     bool         banner;
     ToastContent content;
-} PendingToast;
+} StoredToast;
 
 typedef struct {
     wchar_t aumid[MNOTIFY_AUMID_CAP];
@@ -81,7 +88,10 @@ static const PROPERTYKEY PKEY_LINK_TARGET = {
 static Sqlite       s_sql;
 static bool         s_sql_missing;
 static Store        s_store;
-static PendingToast s_pending[MNOTIFY_MAX_POPUPS];
+static StoredToast  s_pending[MNOTIFY_MAX_POPUPS];
+static StoredToast  s_row;
+static long long    s_saved_id = -1;
+static int          s_held_back;
 static AppInfo      s_apps[TOAST_APP_CACHE];
 static int          s_app_count;
 static int          s_app_next;
@@ -141,10 +151,12 @@ static bool store_path(char *out, int cap) {
 }
 
 static void store_close(void) {
+    if (s_store.history)      s_sql.finalize(s_store.history);
     if (s_store.new_toasts)   s_sql.finalize(s_store.new_toasts);
     if (s_store.max_id)       s_sql.finalize(s_store.max_id);
     if (s_store.data_version) s_sql.finalize(s_store.data_version);
     if (s_store.db)           s_sql.close(s_store.db);
+    s_store.history      = NULL;
     s_store.new_toasts   = NULL;
     s_store.max_id       = NULL;
     s_store.data_version = NULL;
@@ -167,6 +179,31 @@ static int step_int64(sqlite3_stmt *stmt, long long *out) {
     return rc;
 }
 
+static long long saved_last_id(void) {
+    ULONGLONG value = 0;
+    DWORD     size  = sizeof value;
+    if (RegGetValueW(HKEY_CURRENT_USER, MNOTIFY_STATE_KEY, LAST_TOAST_VALUE, RRF_RT_REG_QWORD,
+                     NULL, &value, &size) != ERROR_SUCCESS)
+        return 0;
+    s_saved_id = (long long)value;
+    return s_saved_id;
+}
+
+static void save_last_id(void) {
+    if (s_store.last_id == s_saved_id) return;
+
+    HKEY key;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, MNOTIFY_STATE_KEY, 0, NULL, REG_OPTION_NON_VOLATILE,
+                        KEY_SET_VALUE, NULL, &key, NULL) != ERROR_SUCCESS)
+        return;
+
+    ULONGLONG value = (ULONGLONG)s_store.last_id;
+    if (RegSetValueExW(key, LAST_TOAST_VALUE, 0, REG_QWORD, (const BYTE *)&value, sizeof value)
+            == ERROR_SUCCESS)
+        s_saved_id = s_store.last_id;
+    RegCloseKey(key);
+}
+
 static bool store_open(void) {
     if (!load_sqlite()) return false;
 
@@ -184,7 +221,8 @@ static bool store_open(void) {
 
     if (s_sql.prepare_v2(s_store.db, QUERY_DATA_VERSION, -1, &s_store.data_version, NULL) != 0 ||
         s_sql.prepare_v2(s_store.db, QUERY_MAX_ID, -1, &s_store.max_id, NULL) != 0 ||
-        s_sql.prepare_v2(s_store.db, QUERY_NEW_TOASTS, -1, &s_store.new_toasts, NULL) != 0) {
+        s_sql.prepare_v2(s_store.db, QUERY_NEW_TOASTS, -1, &s_store.new_toasts, NULL) != 0 ||
+        s_sql.prepare_v2(s_store.db, QUERY_HISTORY, -1, &s_store.history, NULL) != 0) {
         store_fail(L"reading the notification store's layout");
         return false;
     }
@@ -196,8 +234,12 @@ static bool store_open(void) {
     }
 
     if (!s_store.have_baseline) {
-        s_store.last_id       = max_id;
+        s_store.last_id       = saved_last_id();
         s_store.have_baseline = true;
+        if (s_store.last_id)
+            log_msg(LOG_INFO, L"toasts: catching up on notifications after %lld", s_store.last_id);
+        else
+            log_msg(LOG_INFO, L"toasts: first run; catching up on every stored notification");
     }
     s_store.version = -1;
     s_store.failing = false;
@@ -234,6 +276,24 @@ static bool is_expired(long long expiry) {
     return expiry < now;
 }
 
+static bool read_row(sqlite3_stmt *q, StoredToast *t) {
+    t->id      = s_sql.column_int64(q, 0);
+    t->arrival = s_sql.column_int64(q, 4);
+    t->banner  = s_sql.column_int64(q, 5) != 0;
+    if (is_expired(s_sql.column_int64(q, 3))) return false;
+
+    const char *payload = (const char *)s_sql.column_blob(q, 2);
+    int         bytes   = s_sql.column_bytes(q, 2);
+    if (!payload || bytes <= 0 || !toast_parse(payload, (size_t)bytes, &t->content)) {
+        log_msg(LOG_DEBUG, L"toasts: skipped notification %lld (nothing to show)", t->id);
+        return false;
+    }
+
+    const wchar_t *aumid = (const wchar_t *)s_sql.column_text16(q, 1);
+    mnotify_copy_w(t->aumid, MNOTIFY_AUMID_CAP, aumid ? aumid : L"");
+    return true;
+}
+
 static int collect_new_toasts(void) {
     sqlite3_stmt *q = s_store.new_toasts;
     s_sql.bind_int64(q, 1, s_store.last_id);
@@ -243,20 +303,13 @@ static int collect_new_toasts(void) {
     while ((rc = s_sql.step(q)) == SQLITE_ROW) {
         long long id = s_sql.column_int64(q, 0);
         if (id > s_store.last_id) s_store.last_id = id;
-        if (is_expired(s_sql.column_int64(q, 3))) continue;
-
-        PendingToast *t = &s_pending[count % MNOTIFY_MAX_POPUPS];
-        const char   *payload = (const char *)s_sql.column_blob(q, 2);
-        int           bytes   = s_sql.column_bytes(q, 2);
-        if (!payload || bytes <= 0 || !toast_parse(payload, (size_t)bytes, &t->content)) {
-            log_msg(LOG_DEBUG, L"toasts: skipped notification %lld (nothing to show)", id);
+        if (!read_row(q, &s_row)) continue;
+        if (!s_row.banner) {
+            log_msg(LOG_DEBUG, L"toasts: banners are off for %ls; not showing %lld",
+                    s_row.aumid, s_row.id);
             continue;
         }
-
-        const wchar_t *aumid = (const wchar_t *)s_sql.column_text16(q, 1);
-        mnotify_copy_w(t->aumid, MNOTIFY_AUMID_CAP, aumid ? aumid : L"");
-        t->id     = id;
-        t->banner = s_sql.column_int64(q, 4) != 0;
+        s_pending[count % MNOTIFY_MAX_POPUPS] = s_row;
         count++;
     }
     s_sql.reset(q);
@@ -351,20 +404,16 @@ static void app_line(const AppInfo *app, const char *attribution, wchar_t *out, 
     out[cap - 1] = L'\0';
 }
 
-static void show_toast(const PendingToast *t) {
+static void fill_target(const StoredToast *t, const AppInfo *app, ToastTarget *target) {
+    mnotify_copy_w(target->aumid, MNOTIFY_AUMID_CAP, t->aumid);
+    mnotify_copy_w(target->exe,   MAX_PATH,          app->exe);
+    target->activation      = t->content.activation;
+    target->launch_complete = utf8_to_wide(t->content.launch, target->launch, MNOTIFY_LAUNCH_CAP) &&
+                              !t->content.launch_truncated;
+}
+
+static void show_toast(const StoredToast *t) {
     const AppInfo *app = app_info(t->aumid);
-
-    if (!t->banner) {
-        log_msg(LOG_DEBUG, L"toasts: banners are off for %ls; not showing %lld", app->name, t->id);
-        return;
-    }
-
-    QUERY_USER_NOTIFICATION_STATE state = tray_host_user_state();
-    if (state != QUNS_ACCEPTS_NOTIFICATIONS) {
-        log_msg(LOG_INFO, L"toasts: holding back one from %ls (user notification state %d)",
-                app->name, (int)state);
-        return;
-    }
 
     Note note;
     memset(&note, 0, sizeof note);
@@ -375,19 +424,55 @@ static void show_toast(const PendingToast *t) {
     utf8_to_wide(t->content.title, note.title, MNOTIFY_TITLE_CAP);
     utf8_to_wide(t->content.body,  note.text,  MNOTIFY_TEXT_CAP);
 
-    ToastTarget *target = &note.toast;
-    mnotify_copy_w(target->aumid, MNOTIFY_AUMID_CAP, t->aumid);
-    mnotify_copy_w(target->exe,   MAX_PATH,          app->exe);
-    target->activation      = t->content.activation;
-    target->launch_complete = utf8_to_wide(t->content.launch, target->launch, MNOTIFY_LAUNCH_CAP) &&
-                              !t->content.launch_truncated;
+    fill_target(t, app, &note.toast);
 
     log_msg(LOG_INFO,  L"toast from %ls", note.app);
     log_msg(LOG_DEBUG, L"toasts: %lld [%ls] %ls", t->id, note.title, note.text);
     popup_show(&note);
 }
 
+static void show_summary(int count, bool while_busy) {
+    Note note;
+    memset(&note, 0, sizeof note);
+    note.source     = NOTE_FROM_BACKLOG;
+    note.kind       = NOTE_INFO;
+    note.timeout_ms = MNOTIFY_LONG_TIMEOUT_MS;
+
+    const wchar_t *noun = count == 1 ? L"notification" : L"notifications";
+    if (while_busy) _snwprintf(note.title, MNOTIFY_TITLE_CAP, L"%d %ls while you were busy", count, noun);
+    else            _snwprintf(note.title, MNOTIFY_TITLE_CAP, L"%d more %ls", count, noun);
+    note.title[MNOTIFY_TITLE_CAP - 1] = L'\0';
+    mnotify_copy_w(note.app,  MNOTIFY_APP_CAP,  L"mnotify");
+    mnotify_copy_w(note.text, MNOTIFY_TEXT_CAP, L"Click to list them, or run mnotify --history.");
+
+    log_msg(LOG_INFO, L"toasts: %ls", note.title);
+    popup_show(&note);
+}
+
+static void present(int count) {
+    if (!count) return;
+
+    QUERY_USER_NOTIFICATION_STATE state = tray_host_user_state();
+    if (state != QUNS_ACCEPTS_NOTIFICATIONS) {
+        s_held_back += count;
+        log_msg(LOG_INFO, L"toasts: holding back %d (user notification state %d)", count, (int)state);
+        return;
+    }
+
+    int shown = count > MNOTIFY_MAX_POPUPS ? MNOTIFY_MAX_POPUPS - 1 : count;
+    if (shown < count) show_summary(count - shown, false);
+    for (int i = count - shown; i < count; i++) show_toast(&s_pending[i % MNOTIFY_MAX_POPUPS]);
+}
+
+static void release_held_back(void) {
+    if (!s_held_back || tray_host_user_state() != QUNS_ACCEPTS_NOTIFICATIONS) return;
+    show_summary(s_held_back, true);
+    s_held_back = 0;
+}
+
 static void poll(void) {
+    release_held_back();
+
     if (!s_store.db) {
         if (s_sql_missing || GetTickCount64() < s_store.retry_at || !store_open()) return;
     }
@@ -405,14 +490,77 @@ static void poll(void) {
     if (rc != SQLITE_ROW)  { store_fail(L"checking the notification store"); return; }
 
     if (max_id < s_store.last_id) s_store.last_id = max_id;
-    if (max_id == s_store.last_id) return;
+    if (max_id > s_store.last_id) present(collect_new_toasts());
+    save_last_id();
+}
 
-    int count = collect_new_toasts();
-    int first = count > MNOTIFY_MAX_POPUPS ? count - MNOTIFY_MAX_POPUPS : 0;
-    if (first) log_msg(LOG_INFO, L"toasts: %d arrived at once; showing the newest %d",
-                       count, MNOTIFY_MAX_POPUPS);
+static void shorten(wchar_t *s, size_t chars) {
+    if (wcslen(s) <= chars) return;
+    size_t cut = chars - 1;
+    if (IS_HIGH_SURROGATE(s[cut - 1])) cut--;
+    s[cut]     = L'\u2026';
+    s[cut + 1] = L'\0';
+}
 
-    for (int i = first; i < count; i++) show_toast(&s_pending[i % MNOTIFY_MAX_POPUPS]);
+static void history_label(const AppInfo *app, const StoredToast *t, wchar_t *out, size_t cap) {
+    wchar_t title[MNOTIFY_TITLE_CAP];
+    wchar_t body[MNOTIFY_TEXT_CAP];
+    utf8_to_wide(t->content.title, title, MNOTIFY_TITLE_CAP);
+    utf8_to_wide(t->content.body,  body,  MNOTIFY_TEXT_CAP);
+
+    wchar_t *newline = wcschr(body, L'\n');
+    if (newline) *newline = L'\0';
+
+    if (body[0]) _snwprintf(out, cap, L"%ls \u2014 %ls: %ls", app->name, title, body);
+    else         _snwprintf(out, cap, L"%ls \u2014 %ls", app->name, title);
+    out[cap - 1] = L'\0';
+    for (wchar_t *c = out; *c; c++)
+        if (*c < L' ') *c = L' ';
+    shorten(out, HISTORY_LABEL_CHARS);
+}
+
+static void format_when(long long arrival, wchar_t *out, size_t cap) {
+    FILETIME   utc = { (DWORD)arrival, (DWORD)((ULONGLONG)arrival >> 32) };
+    SYSTEMTIME at_utc, at, now;
+    out[0] = L'\0';
+    if (!FileTimeToSystemTime(&utc, &at_utc) ||
+        !SystemTimeToTzSpecificLocalTime(NULL, &at_utc, &at))
+        return;
+
+    GetLocalTime(&now);
+    if (at.wYear == now.wYear && at.wMonth == now.wMonth && at.wDay == now.wDay) {
+        _snwprintf(out, cap, L"%02u:%02u", at.wHour, at.wMinute);
+    } else {
+        wchar_t day[24];
+        if (!GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &at, L"ddd d MMM", day, 24, NULL))
+            day[0] = L'\0';
+        _snwprintf(out, cap, L"%ls %02u:%02u", day, at.wHour, at.wMinute);
+    }
+    out[cap - 1] = L'\0';
+}
+
+int toasts_history(HistoryItem *items, int cap) {
+    if (!s_store.db && (s_sql_missing || !store_open())) return -1;
+
+    sqlite3_stmt *q     = s_store.history;
+    int           count = 0;
+    int           rc    = SQLITE_DONE;
+    while (count < cap && (rc = s_sql.step(q)) == SQLITE_ROW) {
+        if (!read_row(q, &s_row)) continue;
+
+        const AppInfo *app  = app_info(s_row.aumid);
+        HistoryItem   *item = &items[count++];
+        history_label(app, &s_row, item->label, MNOTIFY_LABEL_CAP);
+        format_when(s_row.arrival, item->when, MNOTIFY_WHEN_CAP);
+        fill_target(&s_row, app, &item->target);
+    }
+    s_sql.reset(q);
+
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE && rc != SQLITE_BUSY) {
+        store_fail(L"reading the notification history");
+        return -1;
+    }
+    return count;
 }
 
 static void warn_if_toasts_disabled(void) {

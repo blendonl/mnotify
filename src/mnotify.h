@@ -33,6 +33,7 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define WM_MNOTIFY_DISMISS   (WM_APP + 2)
 #define WM_MNOTIFY_QUIT      (WM_APP + 3)
 #define WM_MNOTIFY_TOAST_FOCUS (WM_APP + 4)
+#define WM_MNOTIFY_HISTORY   (WM_APP + 5)
 
 #define MNOTIFY_COPY_SEND    0x6D6E0001
 
@@ -42,6 +43,9 @@ _Static_assert(sizeof(wchar_t) == sizeof(TrayChar),
 #define MNOTIFY_MAX_POPUPS   5
 #define MNOTIFY_AUMID_CAP    256
 #define MNOTIFY_LAUNCH_CAP   TOAST_LAUNCH_CAP
+#define MNOTIFY_HISTORY_MAX  40
+#define MNOTIFY_LABEL_CAP    128
+#define MNOTIFY_WHEN_CAP     32
 
 #define MNOTIFY_DEFAULT_TIMEOUT_MS 6000
 #define MNOTIFY_LONG_TIMEOUT_MS    25000
@@ -63,6 +67,7 @@ typedef enum {
     NOTE_FROM_SEND = 0,
     NOTE_FROM_TRAY,
     NOTE_FROM_TOAST,
+    NOTE_FROM_BACKLOG,
 } NoteSource;
 
 typedef struct {
@@ -83,6 +88,12 @@ typedef struct {
     TrayIcon    icon;
     ToastTarget toast;
 } Note;
+
+typedef struct {
+    wchar_t     label[MNOTIFY_LABEL_CAP];
+    wchar_t     when[MNOTIFY_WHEN_CAP];
+    ToastTarget target;
+} HistoryItem;
 
 typedef struct {
     uint32_t kind;
@@ -121,6 +132,7 @@ QUERY_USER_NOTIFICATION_STATE tray_host_user_state(void);
 
 void toasts_init(void);
 void toasts_shutdown(void);
+int  toasts_history(HistoryItem *items, int cap);
 
 void toast_activate(const ToastTarget *target);
 void toast_focus_pending(void);
@@ -132,5 +144,6 @@ void popup_hide_for(const TrayIdentity *id);
 void popup_dismiss_all(void);
 
 void menu_show_tray(void);
+void menu_show_history(void);
 
 #endif

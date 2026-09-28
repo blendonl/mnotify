@@ -38,7 +38,8 @@ Discord checks whether the shell will accept a notification before it sends
 one, by asking `Shell_TrayWnd` (`SHQueryUserNotificationState`). mnotify
 answers the way Explorer does, so Discord notifies again. The answer is "not
 now" while a screensaver, presentation mode or an exclusive-fullscreen game is
-running, and mnotify holds back toasts at those times too.
+running. mnotify holds back toasts at those times too, and when you are back it
+tells you how many arrived.
 
 In practice:
 
@@ -60,6 +61,7 @@ mnotify                         host the tray (nothing happens if it already is)
 mnotify --send <title> [text]   show a notification
         --kind info|warn|error    its accent colour
 mnotify --tray                  open a menu of tray icons at the cursor
+mnotify --history               open a menu of recent notifications at the cursor
 mnotify --dismiss               close every notification on screen
 mnotify --quit                  stop the running instance
 
@@ -82,6 +84,16 @@ then on:
   are brought forward instead, through their tray icon if their window is
   hidden. Right-click dismisses it. Reminders and calls stay up for 25 s. Apps
   whose banners you turned off in Windows' notification settings stay quiet.
+- **Toasts you missed** pop up when mnotify starts, the way Explorer shows them
+  when it starts: the ones that arrived while mnotify was not running, such as
+  overnight or before you signed in. It shows the newest four and a note saying
+  how many more there are. Clicking the note lists them all. mnotify remembers
+  the last toast it handled, so nothing is shown twice. On its first run, it
+  catches up on everything Windows is holding.
+- **`mnotify --history`** opens a menu of the notifications Windows is holding,
+  newest first, with the time each one arrived. Windows keeps them for up to
+  three days, 20 per app. Choosing one does what clicking the notification
+  would have done.
 - **A balloon** becomes a notification in the chosen corner, naming the app that
   sent it. Left-click it to do what clicking the balloon would have done (the
   app gets `NIN_BALLOONUSERCLICK`), right-click to dismiss it. Hovering keeps it
@@ -110,6 +122,8 @@ mshell.exec.startup("mnotify.exe")
 
 mshell.keys.bind({"LWin"}, "n",
     function() mshell.exec("mnotify.exe", "--tray") end, { desc = "tray icons" })
+mshell.keys.bind({"LWin", "LShift"}, "n",
+    function() mshell.exec("mnotify.exe", "--history") end, { desc = "notification history" })
 ```
 
 Its windows are tool windows, which mshell never tiles.

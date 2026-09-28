@@ -8,6 +8,8 @@ typedef struct {
     int          count;
 } MenuSlots;
 
+static bool s_menu_open;
+
 static UINT command_for(int slot, TrayClick click) {
     return (UINT)(slot * MENU_ACTIONS + (int)click + 1);
 }
@@ -64,7 +66,35 @@ static HMENU build_menu(MenuSlots *slots) {
     return root;
 }
 
+static UINT track_menu(HMENU menu) {
+    HWND previous = GetForegroundWindow();
+    if (!SetForegroundWindow(mn.control))
+        log_msg(LOG_WARN, L"menu: could not take the foreground; "
+                          L"clicking outside the menu may not close it (Esc will)");
+
+    POINT pt = { 0, 0 };
+    GetCursorPos(&pt);
+
+    s_menu_open = true;
+    SetLastError(0);
+    UINT cmd = (UINT)TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                                      pt.x, pt.y, mn.control, NULL);
+    DWORD error = GetLastError();
+    s_menu_open = false;
+    PostMessageW(mn.control, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+
+    if (!cmd && error) log_msg(LOG_WARN, L"menu: TrackPopupMenuEx failed (%lu)", error);
+    else               log_msg(LOG_DEBUG, L"menu: closed with command %u", cmd);
+
+    if (!cmd && previous && previous != mn.control && IsWindow(previous) &&
+        GetForegroundWindow() == mn.control)
+        SetForegroundWindow(previous);
+    return cmd;
+}
+
 void menu_show_tray(void) {
+    if (s_menu_open) return;
     tray_host_prune();
 
     MenuSlots *slots = (MenuSlots *)calloc(1, sizeof *slots);
@@ -73,23 +103,8 @@ void menu_show_tray(void) {
     HMENU menu = build_menu(slots);
     if (!menu) { free(slots); return; }
 
-    if (!SetForegroundWindow(mn.control))
-        log_msg(LOG_WARN, L"menu: could not take the foreground; "
-                          L"clicking outside the menu may not close it (Esc will)");
-
-    POINT pt = { 0, 0 };
-    GetCursorPos(&pt);
-    log_msg(LOG_DEBUG, L"menu: opening with %d icon(s) at %ld,%ld", slots->count, pt.x, pt.y);
-
-    SetLastError(0);
-    UINT cmd = (UINT)TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-                                      pt.x, pt.y, mn.control, NULL);
-    DWORD error = GetLastError();
-    PostMessageW(mn.control, WM_NULL, 0, 0);
-    DestroyMenu(menu);
-
-    if (!cmd && error) log_msg(LOG_WARN, L"menu: TrackPopupMenuEx failed (%lu)", error);
-    else               log_msg(LOG_DEBUG, L"menu: closed with command %u", cmd);
+    log_msg(LOG_DEBUG, L"menu: opening with %d icon(s)", slots->count);
+    UINT cmd = track_menu(menu);
 
     if (cmd) {
         int       slot  = (int)(cmd - 1) / MENU_ACTIONS;
@@ -106,4 +121,35 @@ void menu_show_tray(void) {
     }
 
     free(slots);
+}
+
+void menu_show_history(void) {
+    if (s_menu_open) return;
+
+    HistoryItem *items = (HistoryItem *)calloc(MNOTIFY_HISTORY_MAX, sizeof *items);
+    if (!items) return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) { free(items); return; }
+
+    int count = toasts_history(items, MNOTIFY_HISTORY_MAX);
+    if (count <= 0)
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
+                    count < 0 ? L"Notification history is unavailable" : L"No notifications");
+
+    for (int i = 0; i < count; i++) {
+        wchar_t label[MNOTIFY_LABEL_CAP * 2];
+        escape_ampersands(items[i].label, label, MNOTIFY_LABEL_CAP * 2);
+
+        wchar_t entry[MNOTIFY_LABEL_CAP * 2 + MNOTIFY_WHEN_CAP + 2];
+        _snwprintf(entry, sizeof entry / sizeof entry[0], L"%ls\t%ls", label, items[i].when);
+        entry[sizeof entry / sizeof entry[0] - 1] = L'\0';
+        AppendMenuW(menu, MF_STRING, (UINT_PTR)(i + 1), entry);
+    }
+
+    log_msg(LOG_DEBUG, L"menu: opening the history with %d notification(s)", count);
+    UINT cmd = track_menu(menu);
+    if (cmd >= 1 && (int)cmd <= count) toast_activate(&items[cmd - 1].target);
+
+    free(items);
 }

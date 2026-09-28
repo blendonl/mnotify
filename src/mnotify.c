@@ -6,6 +6,7 @@ typedef enum {
     ACTION_RUN = 0,
     ACTION_SEND,
     ACTION_TRAY,
+    ACTION_HISTORY,
     ACTION_DISMISS,
     ACTION_QUIT,
 } Action;
@@ -115,6 +116,7 @@ static void parse_args(Options *opt) {
             i++;
         }
         else if (match(a, L"--tray"))    opt->action  = ACTION_TRAY;
+        else if (match(a, L"--history")) opt->action  = ACTION_HISTORY;
         else if (match(a, L"--dismiss")) opt->action  = ACTION_DISMISS;
         else if (match(a, L"--quit"))    opt->action  = ACTION_QUIT;
         else if (match(a, L"--version")) opt->version = true;
@@ -132,6 +134,7 @@ static const char *USAGE =
     "  mnotify --send <title> [text]   show a notification\n"
     "          --kind info|warn|error    its accent colour\n"
     "  mnotify --tray                  open a menu of tray icons at the cursor\n"
+    "  mnotify --history               open a menu of recent notifications at the cursor\n"
     "  mnotify --dismiss               close every notification on screen\n"
     "  mnotify --quit                  stop the running instance\n"
     "\n"
@@ -179,11 +182,13 @@ static int run_as_client(const Options *opt) {
                             SMTO_ABORTIFHUNG, 2000, &accepted);
         return accepted ? 0 : 1;
     }
-    case ACTION_TRAY: {
+    case ACTION_TRAY:
+    case ACTION_HISTORY: {
         DWORD pid = 0;
         GetWindowThreadProcessId(resident, &pid);
         if (pid) AllowSetForegroundWindow(pid);
-        PostMessageW(resident, WM_MNOTIFY_TRAY_MENU, 0, 0);
+        PostMessageW(resident, opt->action == ACTION_TRAY ? WM_MNOTIFY_TRAY_MENU : WM_MNOTIFY_HISTORY,
+                     0, 0);
         return 0;
     }
     case ACTION_DISMISS:
@@ -230,6 +235,9 @@ static LRESULT CALLBACK control_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     case WM_MNOTIFY_TRAY_MENU:
         menu_show_tray();
         return 0;
+    case WM_MNOTIFY_HISTORY:
+        menu_show_history();
+        return 0;
     case WM_MNOTIFY_DISMISS:
         EndMenu();
         popup_dismiss_all();
@@ -269,6 +277,7 @@ static bool control_init(void) {
 
     static const UINT allowed[] = {
         WM_COPYDATA, WM_MNOTIFY_TRAY_MENU, WM_MNOTIFY_DISMISS, WM_MNOTIFY_QUIT,
+        WM_MNOTIFY_HISTORY,
     };
     for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
         ChangeWindowMessageFilterEx(mn.control, allowed[i], MSGFLT_ALLOW, NULL);
@@ -304,7 +313,7 @@ static int run(HINSTANCE hinst) {
         if (once) CloseHandle(once);
         return 0;
     }
-    if (opt.action == ACTION_TRAY) {
+    if (opt.action == ACTION_TRAY || opt.action == ACTION_HISTORY) {
         console_print("error: mnotify is not running; start it with `mnotify`");
         if (once) CloseHandle(once);
         return 1;
