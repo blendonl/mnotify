@@ -63,15 +63,21 @@ mnotify --send <title> [text]   show a notification
 mnotify --tray                  open a menu of tray icons at the cursor
 mnotify --history               open a menu of recent notifications at the cursor
 mnotify --dismiss               close every notification on screen
+mnotify --reload                reload the config in the running instance
+mnotify --check                 load the config, report errors and exit
 mnotify --quit                  stop the running instance
 
-Read when the host starts:
---corner <where>                bottom-right|top-right|bottom-left|top-left
---timeout <ms>                  how long a notification stays up (6000)
+Read when the host starts, overriding the config:
+--corner <where>                bottom-right|top-right|bottom-left|top-left|
+                                top-center|bottom-center
+--timeout <ms>|forever          how long a notification stays up
 --log-level <lvl>               error|warn|info|debug|trace
 
 mnotify --version               print the version and exit
 ```
+
+Everything else (how long notifications last, where they go, how they look and
+move, and per-app rules) lives in a Lua config; see [Configuration](#configuration).
 
 Start it once per session. It stays resident, asks running apps to re-register
 their tray icons (the same `TaskbarCreated` broadcast Explorer sends), and from
@@ -128,14 +134,165 @@ mshell.keys.bind({"LWin", "LShift"}, "n",
 
 Its windows are tool windows, which mshell never tiles.
 
+## Configuration
+
+mnotify reads `%APPDATA%\mnotify\init.lua`, the way mshell reads
+`%APPDATA%\mshell\init.lua`. If that file does not exist it falls back to
+`config\init.lua` next to `mnotify.exe`, and with neither it uses its built-in
+defaults. The installer puts the default config in `%APPDATA%\mnotify` and never
+overwrites yours; when a release changes the default, it is written beside yours
+as `init.lua.new`.
+
+Saving the file reloads it: the look changes on screen without a restart. A
+config with an error is rejected as a whole: mnotify keeps the previous one,
+shows the error in a notification and logs it. `mnotify --check` loads it and
+prints the error without touching the running instance, and `mnotify --reload`
+reloads it on demand. For completion and type checking in an editor with the
+Lua language server, open the `%APPDATA%\mnotify` folder; the installer puts
+`.luarc.json` and `meta\mnotify.lua` there.
+
+The default config, which sets every option to its default:
+
+```lua
+mnotify.config.auto_reload(true)
+mnotify.log.level("info")
+
+mnotify.behavior.setup {
+    timeout        = 6000,
+    long_timeout   = 25000,
+    pause_on_hover = true,
+    hover_grace    = 1500,
+    max_visible    = 5,
+    hold_when_busy = true,
+    catch_up       = true,
+}
+
+mnotify.position.setup {
+    corner  = "bottom-right",
+    monitor = "cursor",
+    margin  = 16,
+    spacing = 10,
+}
+
+mnotify.theme.setup {
+    bg     = 0x1e1e2e,
+    fg     = 0xcdd6f4,
+    dim    = 0xa6adc8,
+    border = 0x45475a,
+    info   = 0x89b4fa,
+    warn   = 0xf9e2af,
+    error  = 0xf38ba8,
+
+    opacity = 255,
+    corners = "round",
+
+    font       = "Segoe UI",
+    font_size  = 14,
+    title_size = 15,
+    app_size   = 12,
+
+    width        = 360,
+    padding      = 14,
+    line_spacing = 3,
+    body_lines   = 6,
+
+    accent       = "left",
+    accent_width = 3,
+}
+
+mnotify.animation.setup {
+    open     = "slide",
+    close    = "fade",
+    duration = 200,
+    easing   = "ease_out",
+}
+
+mnotify.on("notify", function(n)
+    return n
+end)
+```
+
+Each `setup` call only changes the settings it names, so a config can be as
+short as `mnotify.behavior.setup { timeout = "forever" }`. An unknown setting
+or a value out of range is an error, not silently ignored. Sizes are in pixels
+at 100% scaling and grow with the monitor's scale. Colours are `0xRRGGBB`
+numbers or `"#rrggbb"` strings.
+
+| Setting | Values | Meaning |
+|---|---|---|
+| `behavior.timeout` | ms, or `"forever"` | How long a notification stays up. A `"forever"` one stays until you click it, right-click it or run `mnotify --dismiss`, or until `max_visible` pushes it out. |
+| `behavior.long_timeout` | ms, or `"forever"` | The same for reminders and calls, and for mnotify's own notices. |
+| `behavior.pause_on_hover` | boolean | Keep a notification up while the pointer is on it. |
+| `behavior.hover_grace` | 0 to 60000 ms | How long it stays after the pointer leaves. |
+| `behavior.max_visible` | 1 to 10 | How many are on screen at once; the oldest goes first. |
+| `behavior.hold_when_busy` | boolean | Hold toasts back during a fullscreen game, presentation or screensaver, and say how many arrived afterwards. |
+| `behavior.catch_up` | boolean | Show toasts that arrived while mnotify was not running. Read when mnotify starts. |
+| `position.corner` | `bottom-right`, `top-right`, `bottom-left`, `top-left`, `top-center`, `bottom-center` | Where notifications stack. |
+| `position.monitor` | `cursor`, `primary` | The monitor under the pointer, or the primary one. |
+| `position.margin` | 0 to 1000 | Distance from the edge of the screen. |
+| `position.spacing` | 0 to 500 | Gap between notifications. |
+| `theme.bg`, `fg`, `dim` | colour | Background; title; app name and body text under a title. |
+| `theme.border` | colour, or `"none"` | The window border. |
+| `theme.info`, `warn`, `error` | colour | The accent bar for each kind. |
+| `theme.opacity` | 0 to 255 | Opacity of the whole notification. |
+| `theme.corners` | `round`, `small`, `square` | Window corners (Windows 11). |
+| `theme.font` | font family | Used for all text. |
+| `theme.font_size`, `title_size`, `app_size` | 6 to 96 | Text sizes of the body, title and app name. |
+| `theme.width` | 120 to 2000 | Notification width. |
+| `theme.padding` | 0 to 200 | Space inside the notification. |
+| `theme.line_spacing` | 0 to 100 | Gap between app name, title and body. |
+| `theme.body_lines` | 1 to 50 | Body lines shown before the text is cut off. |
+| `theme.accent` | `left`, `none` | The coloured bar on the left, or none. |
+| `theme.accent_width` | 1 to 50 | Width of the bar. |
+| `animation.open` | `slide`, `fade`, `none` | How a notification appears. `slide` moves it in a short way from the screen edge while it fades in. |
+| `animation.close` | `slide`, `fade`, `none` | How it goes away. |
+| `animation.duration` | 0 to 1000 ms | Length of each animation; 0 turns animation off. Notifications moving up or down the stack animate too. |
+| `animation.easing` | `linear`, `ease_out`, `ease_in_out` | The speed curve. |
+| `config.auto_reload(b)` | boolean | Reload when the file is saved. |
+| `log.level(l)` | `error`, `warn`, `info`, `debug`, `trace` | How much goes to `mnotify.log`. |
+
+The tray and history menus are ordinary Windows menus and follow the Windows
+theme, not this one.
+
+### Per-app rules
+
+`mnotify.on("notify", fn)` runs `fn` for every notification before it is shown.
+`n` has `app`, `title`, `text`, `kind` (`info`, `warn`, `error`), `source`
+(`toast`, `balloon`, `send`, or `mnotify` for mnotify's own), `aumid` for
+toasts, `long` (a reminder or call), and `timeout`. Change `app`, `title`,
+`text`, `kind`, `timeout` or `accent` to change what is shown, or return
+`false` to drop the notification:
+
+```lua
+mnotify.on("notify", function(n)
+    if n.app == "Steam" then
+        return false
+    end
+    if n.app == "Discord" then
+        n.timeout = "forever"
+    end
+    if n.kind == "error" then
+        n.accent = "#ff5555"
+        n.timeout = 15000
+    end
+    return n
+end)
+```
+
+A dropped balloon is reported to its app as timed out. If the function fails,
+the error is logged and the notification is shown unchanged. The function
+cannot call `setup`; those only work while `init.lua` loads.
+
 ## Build
 
-Cross-compiled from Linux with **mingw-w64**. There are no dependencies to fetch:
+Cross-compiled from Linux with **mingw-w64**. There are no dependencies to
+fetch: Lua 5.4 is vendored in `vendor/lua` and linked in (see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 
 ```sh
 sudo apt install gcc-mingw-w64-x86-64
 make            # -> mnotify.exe
-make test       # host-side unit tests (the tray protocol)
+make test       # host-side unit tests (tray protocol, toasts, config, animation)
 make dist       # -> dist/mnotify-<version>-win64.zip
 ```
 

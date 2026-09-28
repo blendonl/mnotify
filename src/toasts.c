@@ -234,9 +234,11 @@ static bool store_open(void) {
     }
 
     if (!s_store.have_baseline) {
-        s_store.last_id       = saved_last_id();
+        s_store.last_id       = mn.cfg.behavior.catch_up ? saved_last_id() : max_id;
         s_store.have_baseline = true;
-        if (s_store.last_id)
+        if (!mn.cfg.behavior.catch_up)
+            log_msg(LOG_INFO, L"toasts: catch_up is off; skipping notifications that arrived earlier");
+        else if (s_store.last_id)
             log_msg(LOG_INFO, L"toasts: catching up on notifications after %lld", s_store.last_id);
         else
             log_msg(LOG_INFO, L"toasts: first run; catching up on every stored notification");
@@ -245,27 +247,6 @@ static bool store_open(void) {
     s_store.failing = false;
     log_msg(LOG_INFO, L"toasts: watching the Windows notification store");
     return true;
-}
-
-static bool utf8_to_wide(const char *s, wchar_t *out, size_t cap) {
-    out[0] = L'\0';
-    int need = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
-    if (need <= 0) return false;
-    if ((size_t)need <= cap) {
-        MultiByteToWideChar(CP_UTF8, 0, s, -1, out, (int)cap);
-        return true;
-    }
-
-    wchar_t *all = (wchar_t *)malloc((size_t)need * sizeof(wchar_t));
-    if (!all) return false;
-    MultiByteToWideChar(CP_UTF8, 0, s, -1, all, need);
-
-    size_t keep = cap - 1;
-    if (keep && IS_HIGH_SURROGATE(all[keep - 1])) keep--;
-    memcpy(out, all, keep * sizeof(wchar_t));
-    out[keep] = L'\0';
-    free(all);
-    return false;
 }
 
 static bool is_expired(long long expiry) {
@@ -395,7 +376,7 @@ static const AppInfo *app_info(const wchar_t *aumid) {
 
 static void app_line(const AppInfo *app, const char *attribution, wchar_t *out, size_t cap) {
     wchar_t source[TOAST_ATTRIBUTION_CAP];
-    utf8_to_wide(attribution, source, TOAST_ATTRIBUTION_CAP);
+    mnotify_utf8_to_wide(attribution, source, TOAST_ATTRIBUTION_CAP);
 
     if (source[0] && _wcsicmp(source, app->name) != 0)
         _snwprintf(out, cap, L"%ls · %ls", app->name, source);
@@ -408,7 +389,7 @@ static void fill_target(const StoredToast *t, const AppInfo *app, ToastTarget *t
     mnotify_copy_w(target->aumid, MNOTIFY_AUMID_CAP, t->aumid);
     mnotify_copy_w(target->exe,   MAX_PATH,          app->exe);
     target->activation      = t->content.activation;
-    target->launch_complete = utf8_to_wide(t->content.launch, target->launch, MNOTIFY_LAUNCH_CAP) &&
+    target->launch_complete = mnotify_utf8_to_wide(t->content.launch, target->launch, MNOTIFY_LAUNCH_CAP) &&
                               !t->content.launch_truncated;
 }
 
@@ -417,12 +398,12 @@ static void show_toast(const StoredToast *t) {
 
     Note note;
     memset(&note, 0, sizeof note);
-    note.source     = NOTE_FROM_TOAST;
-    note.kind       = NOTE_INFO;
-    note.timeout_ms = t->content.long_duration ? MNOTIFY_LONG_TIMEOUT_MS : 0;
+    note.source        = NOTE_FROM_TOAST;
+    note.kind          = NOTE_INFO;
+    note.long_duration = t->content.long_duration;
     app_line(app, t->content.attribution, note.app, MNOTIFY_APP_CAP);
-    utf8_to_wide(t->content.title, note.title, MNOTIFY_TITLE_CAP);
-    utf8_to_wide(t->content.body,  note.text,  MNOTIFY_TEXT_CAP);
+    mnotify_utf8_to_wide(t->content.title, note.title, MNOTIFY_TITLE_CAP);
+    mnotify_utf8_to_wide(t->content.body,  note.text,  MNOTIFY_TEXT_CAP);
 
     fill_target(t, app, &note.toast);
 
@@ -434,9 +415,9 @@ static void show_toast(const StoredToast *t) {
 static void show_summary(int count, bool while_busy) {
     Note note;
     memset(&note, 0, sizeof note);
-    note.source     = NOTE_FROM_BACKLOG;
-    note.kind       = NOTE_INFO;
-    note.timeout_ms = MNOTIFY_LONG_TIMEOUT_MS;
+    note.source        = NOTE_FROM_BACKLOG;
+    note.kind          = NOTE_INFO;
+    note.long_duration = true;
 
     const wchar_t *noun = count == 1 ? L"notification" : L"notifications";
     if (while_busy) _snwprintf(note.title, MNOTIFY_TITLE_CAP, L"%d %ls while you were busy", count, noun);
@@ -453,13 +434,14 @@ static void present(int count) {
     if (!count) return;
 
     QUERY_USER_NOTIFICATION_STATE state = tray_host_user_state();
-    if (state != QUNS_ACCEPTS_NOTIFICATIONS) {
+    if (mn.cfg.behavior.hold_when_busy && state != QUNS_ACCEPTS_NOTIFICATIONS) {
         s_held_back += count;
         log_msg(LOG_INFO, L"toasts: holding back %d (user notification state %d)", count, (int)state);
         return;
     }
 
-    int shown = count > MNOTIFY_MAX_POPUPS ? MNOTIFY_MAX_POPUPS - 1 : count;
+    int max   = mn.cfg.behavior.max_visible;
+    int shown = count > max ? max - 1 : count;
     if (shown < count) show_summary(count - shown, false);
     for (int i = count - shown; i < count; i++) show_toast(&s_pending[i % MNOTIFY_MAX_POPUPS]);
 }
@@ -505,8 +487,8 @@ static void shorten(wchar_t *s, size_t chars) {
 static void history_label(const AppInfo *app, const StoredToast *t, wchar_t *out, size_t cap) {
     wchar_t title[MNOTIFY_TITLE_CAP];
     wchar_t body[MNOTIFY_TEXT_CAP];
-    utf8_to_wide(t->content.title, title, MNOTIFY_TITLE_CAP);
-    utf8_to_wide(t->content.body,  body,  MNOTIFY_TEXT_CAP);
+    mnotify_utf8_to_wide(t->content.title, title, MNOTIFY_TITLE_CAP);
+    mnotify_utf8_to_wide(t->content.body,  body,  MNOTIFY_TEXT_CAP);
 
     wchar_t *newline = wcschr(body, L'\n');
     if (newline) *newline = L'\0';
@@ -576,8 +558,9 @@ static void warn_if_toasts_disabled(void) {
 
     Note note;
     memset(&note, 0, sizeof note);
-    note.kind       = NOTE_WARN;
-    note.timeout_ms = MNOTIFY_LONG_TIMEOUT_MS;
+    note.kind          = NOTE_WARN;
+    note.source        = NOTE_FROM_MNOTIFY;
+    note.long_duration = true;
     mnotify_copy_w(note.app,   MNOTIFY_APP_CAP,   L"mnotify");
     mnotify_copy_w(note.title, MNOTIFY_TITLE_CAP, L"Windows notifications are off");
     mnotify_copy_w(note.text,  MNOTIFY_TEXT_CAP,
