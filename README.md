@@ -257,8 +257,10 @@ numbers or `"#rrggbb"` strings.
 | `config.auto_reload(b)` | boolean | Reload when the file is saved. |
 | `log.level(l)` | `error`, `warn`, `info`, `debug`, `trace` | How much goes to `mnotify.log`. |
 
-The tray and history menus are ordinary Windows menus and follow the Windows
-theme, not this one.
+The history panel follows `position` and the theme's colours, `font`, `corners`
+and `border`; it keeps its own sizes and is never see-through. Changes apply
+the next time it opens. The tray menu is an ordinary Windows menu and follows
+the Windows theme, not this one.
 
 ### Per-app rules
 

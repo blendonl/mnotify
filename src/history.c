@@ -15,7 +15,6 @@
 
 #define PANEL_WIDTH          400
 #define PANEL_MAX_HEIGHT     640
-#define PANEL_MARGIN         16
 #define PANEL_PAD            12
 #define HEADER_HEIGHT        50
 #define COUNT_HEIGHT         20
@@ -70,19 +69,20 @@
 #define GLYPH_BELL           L""
 #define GLYPH_WARNING        L""
 
-#define DWM_CORNER_PREFERENCE 33
-#define DWM_BORDER_COLOR      34
-#define DWM_CORNER_ROUND      2
+#define DWM_CORNER_PREFERENCE  33
+#define DWM_BORDER_COLOR       34
+#define DWM_CORNER_SQUARE      1
+#define DWM_CORNER_ROUND       2
+#define DWM_CORNER_ROUND_SMALL 3
+#define DWM_COLOR_NONE         0xFFFFFFFE
 
-#define COLOR_PANEL          RGB(0x18, 0x18, 0x25)
-#define COLOR_CARD           RGB(0x1e, 0x1e, 0x2e)
-#define COLOR_FG             RGB(0xcd, 0xd6, 0xf4)
-#define COLOR_DIM            RGB(0xa6, 0xad, 0xc8)
-#define COLOR_BORDER         RGB(0x45, 0x47, 0x5a)
-#define COLOR_INFO           RGB(0x89, 0xb4, 0xfa)
-#define COLOR_RAISED         RGB(0x31, 0x32, 0x44)
-#define COLOR_MUTED          RGB(0x7f, 0x84, 0x9c)
-#define COLOR_FAINT          RGB(0x6c, 0x70, 0x86)
+#define PANEL_DARKEN         7
+#define SHADE_RAISED         28
+#define SHADE_FAINT          114
+#define SHADE_MUTED          142
+#define SHADE_SELECTED_RING  140
+#define SHADE_SEARCH_RING    150
+
 #define COLOR_MONOGRAM_TEXT  RGB(0x11, 0x11, 0x1b)
 
 static const COLORREF MONOGRAM_COLORS[] = {
@@ -137,6 +137,18 @@ typedef struct {
 } Metrics;
 
 typedef struct {
+    COLORREF panel;
+    COLORREF card;
+    COLORREF raised;
+    COLORREF fg;
+    COLORREF dim;
+    COLORREF muted;
+    COLORREF faint;
+    COLORREF border;
+    COLORREF accent;
+} Palette;
+
+typedef struct {
     RECT header;
     RECT search;
     RECT clear;
@@ -149,6 +161,8 @@ typedef struct {
     HWND         edit;
     HWND         previous;
     UINT         dpi;
+    Palette      palette;
+    wchar_t      face[LF_FACESIZE];
     Fonts        fonts;
     Metrics      metrics;
     HBRUSH       search_brush;
@@ -217,6 +231,43 @@ static COLORREF mix(COLORREF a, COLORREF b, int a_weight) {
     return RGB((GetRValue(a) * a_weight + GetRValue(b) * b_weight) / 255,
                (GetGValue(a) * a_weight + GetGValue(b) * b_weight) / 255,
                (GetBValue(a) * a_weight + GetBValue(b) * b_weight) / 255);
+}
+
+static COLORREF rgb(uint32_t c) {
+    return RGB((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+}
+
+static COLORREF darken(COLORREF c, int by) {
+    int r = GetRValue(c) - by, g = GetGValue(c) - by, b = GetBValue(c) - by;
+    return RGB(r > 0 ? r : 0, g > 0 ? g : 0, b > 0 ? b : 0);
+}
+
+static void apply_theme(void) {
+    const ThemeConfig *theme = &mn.cfg.theme;
+    Palette           *p     = &s_panel.palette;
+    COLORREF bg = rgb(theme->bg);
+    COLORREF fg = rgb(theme->fg);
+
+    p->card   = bg;
+    p->panel  = darken(bg, PANEL_DARKEN);
+    p->raised = mix(fg, bg, SHADE_RAISED);
+    p->faint  = mix(fg, bg, SHADE_FAINT);
+    p->muted  = mix(fg, bg, SHADE_MUTED);
+    p->fg     = fg;
+    p->dim    = rgb(theme->dim);
+    p->border = rgb(theme->border);
+    p->accent = rgb(theme->info);
+
+    mnotify_utf8_to_wide(theme->font, s_panel.face, LF_FACESIZE);
+    if (!s_panel.face[0]) mnotify_copy_w(s_panel.face, LF_FACESIZE, L"Segoe UI");
+}
+
+static int radius(int px) {
+    switch (mn.cfg.theme.corners) {
+    case CORNERS_SQUARE: return 0;
+    case CORNERS_SMALL:  return scaled(px) / 2;
+    default:             return scaled(px);
+    }
 }
 
 static uint32_t pixel_of(COLORREF c) {
@@ -322,15 +373,15 @@ static HFONT make_font(const wchar_t *face, int px, int weight) {
 
 static void fonts_create(void) {
     Fonts *f = &s_panel.fonts;
-    f->header      = make_font(L"Segoe UI", FONT_HEADER_PX,   FW_SEMIBOLD);
-    f->count       = make_font(L"Segoe UI", FONT_COUNT_PX,    FW_SEMIBOLD);
-    f->search      = make_font(L"Segoe UI", FONT_SEARCH_PX,   FW_NORMAL);
-    f->section     = make_font(L"Segoe UI", FONT_SECTION_PX,  FW_SEMIBOLD);
-    f->app         = make_font(L"Segoe UI", FONT_APP_PX,      FW_NORMAL);
-    f->title       = make_font(L"Segoe UI", FONT_TITLE_PX,    FW_SEMIBOLD);
-    f->body        = make_font(L"Segoe UI", FONT_BODY_PX,     FW_NORMAL);
-    f->hint        = make_font(L"Segoe UI", FONT_HINT_PX,     FW_NORMAL);
-    f->monogram    = make_font(L"Segoe UI", FONT_MONOGRAM_PX, FW_BOLD);
+    f->header      = make_font(s_panel.face, FONT_HEADER_PX,   FW_SEMIBOLD);
+    f->count       = make_font(s_panel.face, FONT_COUNT_PX,    FW_SEMIBOLD);
+    f->search      = make_font(s_panel.face, FONT_SEARCH_PX,   FW_NORMAL);
+    f->section     = make_font(s_panel.face, FONT_SECTION_PX,  FW_SEMIBOLD);
+    f->app         = make_font(s_panel.face, FONT_APP_PX,      FW_NORMAL);
+    f->title       = make_font(s_panel.face, FONT_TITLE_PX,    FW_SEMIBOLD);
+    f->body        = make_font(s_panel.face, FONT_BODY_PX,     FW_NORMAL);
+    f->hint        = make_font(s_panel.face, FONT_HINT_PX,     FW_NORMAL);
+    f->monogram    = make_font(s_panel.face, FONT_MONOGRAM_PX, FW_BOLD);
     f->glyph       = make_font(s_glyph_face, FONT_GLYPH_PX,       FW_NORMAL);
     f->empty_glyph = make_font(s_glyph_face, FONT_EMPTY_GLYPH_PX, FW_NORMAL);
 
@@ -634,11 +685,11 @@ static void paint_icon(const HistoryItem *item, int left, int top, RECT clip) {
         return;
     }
     if (!icon && item->target.aumid[0]) {
-        paint_shape(tile, scaled(ICON_RADIUS), 0, COLOR_RAISED, clip);
+        paint_shape(tile, radius(ICON_RADIUS), 0, s_panel.palette.raised, clip);
         return;
     }
 
-    paint_shape(tile, scaled(ICON_RADIUS), 0, monogram_color(item), clip);
+    paint_shape(tile, radius(ICON_RADIUS), 0, monogram_color(item), clip);
     wchar_t letter[2];
     int     len = monogram_letter(item->app, letter);
     draw_text(s_panel.fonts.monogram, COLOR_MONOGRAM_TEXT, letter, len, tile,
@@ -647,7 +698,7 @@ static void paint_icon(const HistoryItem *item, int left, int top, RECT clip) {
 
 static void paint_header(void) {
     const RECT *r = &s_panel.frame.header;
-    draw_text(s_panel.fonts.header, COLOR_FG, L"Notifications", -1, *r,
+    draw_text(s_panel.fonts.header, s_panel.palette.fg, L"Notifications", -1, *r,
               DT_SINGLELINE | DT_VCENTER | DT_LEFT);
     if (s_panel.count <= 0) return;
 
@@ -660,24 +711,24 @@ static void paint_header(void) {
     int  h   = scaled(COUNT_HEIGHT);
     int  mid = (r->top + r->bottom) / 2;
     RECT pill = { r->right - w, mid - h / 2, r->right, mid - h / 2 + h };
-    paint_shape(pill, h / 2, 0, COLOR_RAISED, *r);
-    draw_text(s_panel.fonts.count, COLOR_DIM, label, -1, pill, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    paint_shape(pill, radius(COUNT_HEIGHT / 2), 0, s_panel.palette.raised, *r);
+    draw_text(s_panel.fonts.count, s_panel.palette.dim, label, -1, pill, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
 }
 
 static void paint_search(void) {
     const Frame *f = &s_panel.frame;
     RECT all = { 0, 0, s_panel.canvas.w, s_panel.canvas.h };
-    paint_shape(f->search, scaled(SEARCH_RADIUS), 0, COLOR_CARD, all);
-    paint_shape(f->search, scaled(SEARCH_RADIUS), scaled(1),
-                s_panel.filtering ? mix(COLOR_INFO, COLOR_CARD, 150) : COLOR_RAISED, all);
+    paint_shape(f->search, radius(SEARCH_RADIUS), 0, s_panel.palette.card, all);
+    paint_shape(f->search, radius(SEARCH_RADIUS), scaled(1),
+                s_panel.filtering ? mix(s_panel.palette.accent, s_panel.palette.card, SHADE_SEARCH_RING) : s_panel.palette.raised, all);
 
     RECT glyph = { f->search.left + scaled(SEARCH_INSET), f->search.top,
                    f->search.left + scaled(SEARCH_INSET + SEARCH_GLYPH), f->search.bottom };
-    draw_text(s_panel.fonts.glyph, s_panel.filtering ? COLOR_INFO : COLOR_MUTED, GLYPH_SEARCH, -1,
+    draw_text(s_panel.fonts.glyph, s_panel.filtering ? s_panel.palette.accent : s_panel.palette.muted, GLYPH_SEARCH, -1,
               glyph, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
 
     if (s_panel.query[0])
-        draw_text(s_panel.fonts.glyph, s_panel.clear_hot ? COLOR_FG : COLOR_MUTED, GLYPH_CLEAR, -1,
+        draw_text(s_panel.fonts.glyph, s_panel.clear_hot ? s_panel.palette.fg : s_panel.palette.muted, GLYPH_CLEAR, -1,
                   f->clear, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
 }
 
@@ -687,7 +738,7 @@ static void paint_section(const Row *row, int top) {
     int  pad = scaled(PANEL_PAD);
     RECT r   = { pad + scaled(SECTION_INSET), top, s_panel.canvas.w - pad,
                  top + row->height - scaled(SECTION_BASELINE) };
-    draw_text(s_panel.fonts.section, COLOR_MUTED, label, -1, r,
+    draw_text(s_panel.fonts.section, s_panel.palette.muted, label, -1, r,
               DT_SINGLELINE | DT_BOTTOM | DT_LEFT | DT_END_ELLIPSIS);
 }
 
@@ -696,10 +747,12 @@ static void paint_card(const Row *row, int top, bool selected, RECT clip) {
     const Metrics     *m    = &s_panel.metrics;
     int  pad  = scaled(PANEL_PAD);
     RECT card = { pad, top, s_panel.canvas.w - pad, top + row->height };
-    int  radius = scaled(CARD_RADIUS);
+    int  corner = radius(CARD_RADIUS);
 
-    paint_shape(card, radius, 0, selected ? COLOR_RAISED : COLOR_CARD, clip);
-    if (selected) paint_shape(card, radius, scaled(1), mix(COLOR_INFO, COLOR_RAISED, 140), clip);
+    paint_shape(card, corner, 0, selected ? s_panel.palette.raised : s_panel.palette.card, clip);
+    if (selected)
+        paint_shape(card, corner, scaled(1),
+                    mix(s_panel.palette.accent, s_panel.palette.raised, SHADE_SELECTED_RING), clip);
 
     int icon_left = card.left + scaled(CARD_PAD_X);
     int y         = card.top + scaled(CARD_PAD_Y);
@@ -712,26 +765,26 @@ static void paint_card(const Row *row, int top, bool selected, RECT clip) {
     time_label(item, when, LABEL_CAP);
     int  when_w = when[0] ? text_width(s_panel.fonts.app, when) : 0;
     RECT when_r = { right - when_w, y, right, y + m->app };
-    if (when[0]) draw_text(s_panel.fonts.app, COLOR_MUTED, when, -1, when_r, DT_SINGLELINE | DT_RIGHT);
+    if (when[0]) draw_text(s_panel.fonts.app, s_panel.palette.muted, when, -1, when_r, DT_SINGLELINE | DT_RIGHT);
 
     RECT app_r = { left, y, when[0] ? when_r.left - scaled(TIME_GAP) : right, y + m->app };
-    draw_text(s_panel.fonts.app, COLOR_DIM, item->app, -1, app_r, DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(s_panel.fonts.app, s_panel.palette.dim, item->app, -1, app_r, DT_SINGLELINE | DT_END_ELLIPSIS);
     y += m->app + scaled(LINE_GAP);
 
     RECT heading = { left, y, right, y + m->title };
-    draw_text(s_panel.fonts.title, COLOR_FG, heading_of(item), -1, heading,
+    draw_text(s_panel.fonts.title, s_panel.palette.fg, heading_of(item), -1, heading,
               DT_SINGLELINE | DT_END_ELLIPSIS);
     y += m->title + scaled(LINE_GAP);
 
     const wchar_t *body = body_of(item);
     if (row->body_lines >= 1) {
         RECT line = { left, y, right, y + m->body };
-        draw_text(s_panel.fonts.body, COLOR_DIM, body + row->line1, row->line1_len, line,
+        draw_text(s_panel.fonts.body, s_panel.palette.dim, body + row->line1, row->line1_len, line,
                   DT_SINGLELINE | DT_END_ELLIPSIS);
     }
     if (row->body_lines == 2) {
         RECT line = { left, y + m->body, right, y + 2 * m->body };
-        draw_text(s_panel.fonts.body, COLOR_DIM, body + row->line2, -1, line,
+        draw_text(s_panel.fonts.body, s_panel.palette.dim, body + row->line2, -1, line,
                   DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 }
@@ -763,15 +816,15 @@ static void paint_empty(void) {
     int pad     = 2 * scaled(PANEL_PAD);
 
     RECT g = { pad, y, s_panel.canvas.w - pad, y + glyph_h };
-    draw_text(s_panel.fonts.empty_glyph, COLOR_FAINT, glyph, -1, g, DT_SINGLELINE | DT_CENTER);
+    draw_text(s_panel.fonts.empty_glyph, s_panel.palette.faint, glyph, -1, g, DT_SINGLELINE | DT_CENTER);
     y += glyph_h + 2 * gap;
 
     RECT t = { pad, y, s_panel.canvas.w - pad, y + s_panel.metrics.title };
-    draw_text(s_panel.fonts.title, COLOR_FG, title, -1, t, DT_SINGLELINE | DT_CENTER);
+    draw_text(s_panel.fonts.title, s_panel.palette.fg, title, -1, t, DT_SINGLELINE | DT_CENTER);
     y += s_panel.metrics.title + gap;
 
     RECT d = { pad, y, s_panel.canvas.w - pad, y + s_panel.metrics.body };
-    draw_text(s_panel.fonts.body, COLOR_MUTED, detail, -1, d,
+    draw_text(s_panel.fonts.body, s_panel.palette.muted, detail, -1, d,
               DT_SINGLELINE | DT_CENTER | DT_END_ELLIPSIS);
 }
 
@@ -806,7 +859,7 @@ static void paint_list(void) {
         int  right = s_panel.canvas.w - scaled(THUMB_INSET);
         RECT thumb = { right - scaled(THUMB_WIDTH), list->top + thumb_top,
                        right, list->top + thumb_top + thumb_len };
-        paint_shape(thumb, scaled(THUMB_WIDTH) / 2, 0, COLOR_BORDER, *list);
+        paint_shape(thumb, scaled(THUMB_WIDTH) / 2, 0, s_panel.palette.border, *list);
     }
 }
 
@@ -815,19 +868,19 @@ static int paint_hint(int x, int mid, const wchar_t *key, const wchar_t *action)
     int  h   = scaled(KEYCAP_HEIGHT);
     RECT cap = { x, mid - h / 2, x + text_width(s_panel.fonts.hint, key) + 2 * scaled(KEYCAP_PAD),
                  mid - h / 2 + h };
-    paint_shape(cap, scaled(KEYCAP_RADIUS), 0, COLOR_RAISED, all);
-    draw_text(s_panel.fonts.hint, COLOR_DIM, key, -1, cap, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    paint_shape(cap, radius(KEYCAP_RADIUS), 0, s_panel.palette.raised, all);
+    draw_text(s_panel.fonts.hint, s_panel.palette.dim, key, -1, cap, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
 
     int  label_left = cap.right + scaled(HINT_GAP);
     RECT label = { label_left, cap.top, label_left + text_width(s_panel.fonts.hint, action), cap.bottom };
-    draw_text(s_panel.fonts.hint, COLOR_MUTED, action, -1, label, DT_SINGLELINE | DT_VCENTER);
+    draw_text(s_panel.fonts.hint, s_panel.palette.muted, action, -1, label, DT_SINGLELINE | DT_VCENTER);
     return label.right + scaled(HINT_SPACING);
 }
 
 static void paint_footer(void) {
     const RECT *f = &s_panel.frame.footer;
     RECT line = { f->left, f->top, f->right, f->top + (scaled(1) > 0 ? scaled(1) : 1) };
-    paint_rect(line, COLOR_RAISED);
+    paint_rect(line, s_panel.palette.raised);
 
     int mid = (f->top + f->bottom) / 2;
     int x   = scaled(PANEL_PAD) + scaled(SECTION_INSET);
@@ -840,7 +893,7 @@ static void paint_footer(void) {
 
 static void render(void) {
     RECT all = { 0, 0, s_panel.canvas.w, s_panel.canvas.h };
-    paint_rect(all, COLOR_PANEL);
+    paint_rect(all, s_panel.palette.panel);
     paint_header();
     paint_search();
     paint_list();
@@ -858,7 +911,7 @@ static void paint_placeholder(HWND edit, HDC dc) {
     GetClientRect(edit, &r);
     HGDIOBJ old = SelectObject(dc, s_panel.fonts.search);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, COLOR_FAINT);
+    SetTextColor(dc, s_panel.palette.faint);
     DrawTextW(dc, L"Search notifications", -1, &r,
               DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
     SelectObject(dc, old);
@@ -1005,8 +1058,8 @@ static LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_CTLCOLOREDIT:
-        SetTextColor((HDC)wp, COLOR_FG);
-        SetBkColor((HDC)wp, COLOR_CARD);
+        SetTextColor((HDC)wp, s_panel.palette.fg);
+        SetBkColor((HDC)wp, s_panel.palette.card);
         return (LRESULT)s_panel.search_brush;
 
     case WM_COMMAND:
@@ -1134,7 +1187,7 @@ static bool load_items(void) {
 }
 
 static bool create_search(void) {
-    s_panel.search_brush = CreateSolidBrush(COLOR_CARD);
+    s_panel.search_brush = CreateSolidBrush(s_panel.palette.card);
     s_panel.edit = CreateWindowExW(0, L"EDIT", NULL, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                    0, 0, 0, 0, s_panel.hwnd, (HMENU)(INT_PTR)SEARCH_ID,
                                    mn.hinst, NULL);
@@ -1153,17 +1206,25 @@ static bool create_search(void) {
     return true;
 }
 
-static void round_corners(HWND hwnd) {
-    DWORD corner = DWM_CORNER_ROUND;
+static void style_window(HWND hwnd) {
+    const ThemeConfig *theme = &mn.cfg.theme;
+
+    DWORD corner = theme->corners == CORNERS_SQUARE ? DWM_CORNER_SQUARE
+                 : theme->corners == CORNERS_SMALL  ? DWM_CORNER_ROUND_SMALL
+                 :                                    DWM_CORNER_ROUND;
     DwmSetWindowAttribute(hwnd, DWM_CORNER_PREFERENCE, &corner, sizeof corner);
-    COLORREF border = COLOR_BORDER;
+
+    COLORREF border = theme->border_none ? DWM_COLOR_NONE : s_panel.palette.border;
     DwmSetWindowAttribute(hwnd, DWM_BORDER_COLOR, &border, sizeof border);
 }
 
 static void build_panel(void) {
     POINT cursor = { 0, 0 };
+    POINT anchor = { 0, 0 };
     GetCursorPos(&cursor);
-    HMONITOR    monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+    if (mn.cfg.position.monitor == MONITOR_CURSOR) anchor = cursor;
+
+    HMONITOR    monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi      = { .cbSize = sizeof mi };
     if (!GetMonitorInfoW(monitor, &mi)) return;
 
@@ -1180,15 +1241,25 @@ static void build_panel(void) {
         return;
     }
 
-    RECT work   = mi.rcWork;
-    int  margin = scaled(PANEL_MARGIN);
-    int  w      = scaled(PANEL_WIDTH);
-    int  h      = scaled(PANEL_MAX_HEIGHT);
+    apply_theme();
+
+    Corner corner = mn.cfg.position.corner;
+    RECT   work   = mi.rcWork;
+    int    margin = scaled(mn.cfg.position.margin);
+    int    w      = scaled(PANEL_WIDTH);
+    int    h      = scaled(PANEL_MAX_HEIGHT);
     if (h > work.bottom - work.top - 2 * margin) h = work.bottom - work.top - 2 * margin;
-    bool top    = mn.cfg.position.corner == CORNER_TOP_RIGHT || mn.cfg.position.corner == CORNER_TOP_LEFT;
-    bool right  = mn.cfg.position.corner == CORNER_TOP_RIGHT || mn.cfg.position.corner == CORNER_BOTTOM_RIGHT;
-    int  x      = right ? work.right - margin - w : work.left + margin;
-    int  y      = top ? work.top + margin : work.bottom - margin - h;
+
+    int x;
+    switch (corner) {
+    case CORNER_TOP_RIGHT:
+    case CORNER_BOTTOM_RIGHT: x = work.right - margin - w;                     break;
+    case CORNER_TOP_LEFT:
+    case CORNER_BOTTOM_LEFT:  x = work.left + margin;                          break;
+    default:                  x = work.left + (work.right - work.left - w) / 2; break;
+    }
+    bool top = corner == CORNER_TOP_RIGHT || corner == CORNER_TOP_LEFT || corner == CORNER_TOP_CENTER;
+    int  y   = top ? work.top + margin : work.bottom - margin - h;
 
     s_panel.previous = GetForegroundWindow();
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, HISTORY_CLASS, L"Notifications",
@@ -1217,7 +1288,7 @@ static void build_panel(void) {
 
     if (ScreenToClient(hwnd, &cursor)) s_panel.mouse = cursor;
 
-    round_corners(hwnd);
+    style_window(hwnd);
     ShowWindow(hwnd, SW_SHOW);
     if (!SetForegroundWindow(hwnd))
         log_msg(LOG_WARN, L"history: could not take the foreground; Esc may not reach it");

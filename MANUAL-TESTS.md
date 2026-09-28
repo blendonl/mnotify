@@ -105,9 +105,10 @@ above), or use the ones Windows is already holding.
 | 10 | Click a card, or highlight one and press `Enter`. | The panel closes and the notification is opened as if its popup had been clicked. |
 | 11 | Open it, then click another window. | The panel closes. |
 | 12 | Open it, then run `mnotify --history` again. | The panel closes (the key binding toggles it). `mnotify --dismiss` also closes it. |
-| 13 | Start with `--corner top-left`, open the panel. | It opens in the top-left corner of the monitor under the pointer. |
+| 13 | Set `position.corner = "top-center"` (or start with `--corner top-left`), then open the panel. | It opens there, `position.margin` from the edges. With `position.monitor = "primary"` it opens on the primary monitor wherever the pointer is. |
 | 14 | Open it on a monitor at 150 % scaling. | Text, icons and spacing are scaled, and icons are sharp. |
 | 15 | Open it with no stored notifications. | *No notifications*, with a bell. |
+| 16 | Set a light theme (`bg = "#eff1f5"`, `fg = "#4c4f69"`, `dim = "#6c6f85"`, `border = "#bcc0cc"`, `info = "#1e66f5"`), `corners = "square"` and `font = "Consolas"`, then open the panel. | A light panel with square cards and search box, text in Consolas, and a blue outline on the highlighted card. Headings and footer hints stay readable. |
 
 ## Configuration
 
